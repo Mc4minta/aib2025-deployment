@@ -67,7 +67,6 @@ def display_setup_logs():
             st.write(":white_check_mark: ML Model loaded successfully.")
             st.info(model)
             
-            
             status.update(label=":white_check_mark: ML Model Setup Complete", state="complete", expanded=False)
         except subprocess.CalledProcessError as e:
             st.error(f":x: Error during ML Model setup: {e}")
@@ -76,11 +75,9 @@ def display_setup_logs():
         except Exception as e:
             st.error(f"An unexpected error occurred: {e}")
             status.update(label=":x: ML Model Setup Failed", state="error", expanded=True)
-    time.sleep(0.5)
 
 def initial_setup():
     display_setup_logs()
-    st.success(":tada: Setup Completed")
     st.session_state.initial_setup_completed = True
     st.session_state.setup_failed = False
     st.session_state.show_setup_logs = True
@@ -135,12 +132,12 @@ def main():
             try:
                 initial_setup()
             except Exception as e:
-                st.error(f"❌ Setup failed: {e}")
+                st.error(f":e: Setup failed: {e}")
                 st.session_state.setup_failed = True
                 st.session_state.initial_setup_completed = False
             st.rerun()
 
-    # Logic handling StartSetup button failling
+    # Logic handling StartSetup button failing
     elif st.session_state.setup_failed:
         st.warning("Setup failed. Please try again.")
         if st.button("Start Setup"):
@@ -148,17 +145,14 @@ def main():
             try:
                 initial_setup()
             except Exception as e:
-                st.error(f"❌ Setup failed: {e}")
+                st.error(f":e: Setup failed: {e}")
                 st.session_state.setup_failed = True
                 st.session_state.initial_setup_completed = False
             st.rerun()
 
-    # show complete only when complete
-    if st.session_state.show_setup_logs:
-        st.success(":tada: Setup Completed")
-
-    # Hide log when proceed is click
+    # show success and proceed after setup
     if st.session_state.initial_setup_completed and not st.session_state.proceed_clicked:
+        st.success(":tada: Setup Completed")
         if st.button("Proceed"):
             st.session_state.show_setup_logs = False
             st.session_state.proceed_clicked = True
@@ -166,9 +160,17 @@ def main():
 
     # Proceed to file upload when proceed is clicked
     if st.session_state.initial_setup_completed and st.session_state.proceed_clicked:
+        # Upload file logic
         try:
-            st.info(":file_folder: Browse your file here")
-            # Add your file Browse and classification logic here
+            uploaded_file = st.file_uploader(
+                ":file_folder: Choose a .pcap file", 
+                accept_multiple_files=False,
+                type=["pcap"],
+            )
+            bytes_data = uploaded_file.read()
+            st.write("filename:", uploaded_file.name)
+            st.write(bytes_data)
+            
         except Exception as e:
             st.error(f"Error : {e}")
 
