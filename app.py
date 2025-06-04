@@ -15,21 +15,26 @@ def display_setup_logs():
             subprocess.run(["sudo","apt-get", "install", "-y", "libpcap-dev"], check=True)
             st.write(":white_check_mark: libpcap-dev installed.")
             
-            # Download CICFlowMeter.zip from codeberge
-            st.write(":arrow_down: Downloading CICFlowMeter-3.0...")
-            wget_command = "https://codeberg.org/iortega/TCPDUMP_and_CICFlowMeter/archive/master:CICFlowMeters/CICFlowMeter-3.0.zip"
-            subprocess.run(["wget", wget_command], check=True)
-            st.write(":white_check_mark: CICFlowMeter-3.0.zip downloaded.")
+            # CICflowmeter download if not exist
+            if not os.path.exists("CICFlowMeter-3.0"):
+                # Download CICFlowMeter.zip from codeberg
+                st.write(":arrow_down: Downloading CICFlowMeter-3.0...")
+                url = "https://codeberg.org/iortega/TCPDUMP_and_CICFlowMeter/archive/master:CICFlowMeters/CICFlowMeter-3.0.zip"
+                subprocess.run(["wget", url, "-O", "CICFlowMeter-3.0.zip"], check=True)
+                st.write(":white_check_mark: CICFlowMeter-3.0.zip downloaded.")
+                
+                # Extracting CICFlowMeter from codeberge
+                st.write(":open_file_folder: Extracting CICFlowMeter-3.0...")
+                subprocess.run(["unzip", "CICFlowMeter-3.0.zip", "-d", "CICFlowMeter-3.0"], check=True)
+                st.write(":white_check_mark: CICFlowMeter extracted.")
+                
+                # Clearing unused zip file
+                st.write(":wastebasket: Clearing .zip file...")
+                subprocess.run(["rm","CICFlowMeter-3.0.zip"], check=True)
+                st.write(":white_check_mark: CICFlowMeter-3.0.zip Cleared")
+            else:
+                st.write(":information_source: CICFlowMeter-3.0 existed. Skipping...")
             
-            # Extracting CICFlowMeter from codeberge
-            st.write(":open_file_folder: Extracting CICFlowMeter-3.0...")
-            subprocess.run(["unzip", "CICFlowMeter-3.0.zip", "-d", "CICFlowMeter-3.0"], check=True)
-            st.write(":white_check_mark: CICFlowMeter extracted.")
-            
-            # Clearing unused zip file
-            st.write(":wastebasket: Clearing .zip file...")
-            subprocess.run(["rm","CICFlowMeter-3.0.zip"], check=True)
-            st.write(":white_check_mark: CICFlowMeter-3.0.zip Cleared")
             
             # Creating data/in data/out directories
             st.write(":file_folder: Creating data/in data/out directories...")
@@ -50,13 +55,14 @@ def display_setup_logs():
     # Classification Model setup
     with st.status("Setting up ML Model...",expanded=True) as status:
         try:            
-            # downloading model from hugging face
-            st.write(":hugging_face: Downloading ML model...")
-            model_url = "https://huggingface.co/Mc4minta/RandomForest400IntPortCIC1718/resolve/main/RandomForest400IntPortCIC1718-2.pkl"
-            response = requests.get(model_url)
-            with open("RandomForest400IntPortCIC1718-2.pkl", "wb") as f:
-                f.write(response.content)
-            st.write(":white_check_mark: ML Model downloaded.")
+            # downloading model from hugging face if not exist
+            if not os.path.exists("RandomForest400IntPortCIC1718-2.pkl"):
+                st.write(":hugging_face: Downloading ML model...")
+                model_url = "https://huggingface.co/Mc4minta/RandomForest400IntPortCIC1718/resolve/main/RandomForest400IntPortCIC1718-2.pkl"
+                response = requests.get(model_url)
+                with open("RandomForest400IntPortCIC1718-2.pkl", "wb") as f:
+                    f.write(response.content)
+                st.write(":white_check_mark: ML Model downloaded.")
             
             # import model as using joblib
             st.write(":robot_face: Loading ML model...")
@@ -129,7 +135,7 @@ def main():
             try:
                 initial_setup()
             except Exception as e:
-                st.error(f":e: Setup failed: {e}")
+                st.error(f"❌ Setup failed: {e}")
                 st.session_state.setup_failed = True
                 st.session_state.initial_setup_completed = False
             st.rerun()
@@ -142,7 +148,7 @@ def main():
             try:
                 initial_setup()
             except Exception as e:
-                st.error(f":e: Setup failed: {e}")
+                st.error(f"❌ Setup failed: {e}")
                 st.session_state.setup_failed = True
                 st.session_state.initial_setup_completed = False
             st.rerun()
@@ -157,17 +163,9 @@ def main():
 
     # Proceed to file upload when proceed is clicked
     if st.session_state.initial_setup_completed and st.session_state.proceed_clicked:
-        # Upload file logic
         try:
-            uploaded_file = st.file_uploader(
-                ":file_folder: Choose a .pcap file", 
-                accept_multiple_files=False,
-                type=["pcap"],
-            )
-            bytes_data = uploaded_file.read()
-            st.write("filename:", uploaded_file.name)
-            st.write(bytes_data)
-            
+            st.info(":file_folder: Browse your file here")
+            # Add your file Browse and classification logic here
         except Exception as e:
             st.error(f"Error : {e}")
 
