@@ -1,17 +1,35 @@
 import streamlit as st
 
+import subprocess
+import os
+
+import time
+
 def display_setup_logs():
     # CICFlowMeter setup
-    with st.status("Setting up CICFlowMeter..."):
-        # Download CICFlowMeter.zip from codeberge
-        st.write("Downloading CICFlowMeter...")
-        # Extracting CICFlowMeter from codeberge
-        st.write("Extracting CICFlowMeter...")
-        # Creating data/in data/out directories
-        st.write("Creating data/in data/out directories...")
+    with st.status("Setting up CICFlowMeter...",expanded=True) as status:
+        try:
+            # Download CICFlowMeter.zip from codeberge
+            st.write("Downloading CICFlowMeter...")
+            wget_command = "https://codeberg.org/iortega/TCPDUMP_and_CICFlowMeter/archive/master:CICFlowMeters/CICFlowMeter-3.0.zip"
+            subprocess.run(["wget", wget_command], check=True)
+            st.write("CICFlowMeter downloaded.")
+            
+            # Extracting CICFlowMeter from codeberge
+            st.write("Extracting CICFlowMeter...")
+            # Creating data/in data/out directories
+            st.write("Creating data/in data/out directories...")
+            
+            status.update(label="CICFlowMeter Setup Complete!", state="complete", expanded=False)
+        except subprocess.CalledProcessError as e:
+            st.error(f"Error during CICFlowMeter setup: {e}")
+            status.update(label="CICFlowMeter Setup Failed", state="error", expanded=True)
+        except Exception as e:
+            st.error(f"An unexpected error occurred: {e}")
+            status.update(label="CICFlowMeter Setup Failed", state="error", expanded=True)
 
     # Classification Model setup
-    with st.status("Setting up ML Model..."):
+    with st.status("Setting up ML Model...",expanded=True):
         # downloading model from huggin face
         st.write("Downloading ML model from huggingface...")
         # import model as using joblib
@@ -87,6 +105,8 @@ def main():
 
     if st.session_state.show_setup_logs:
         st.success(":tada: Setup Completed")
+        
+    time.sleep(5)
 
     if st.session_state.initial_setup_completed and not st.session_state.proceed_clicked:
         if st.button("Proceed"):
@@ -96,7 +116,7 @@ def main():
 
     if st.session_state.initial_setup_completed and st.session_state.proceed_clicked:
         try:
-            st.info("Browse your file here")
+            st.info(":file_folder: Browse your file here")
             # Add your file Browse and classification logic here
         except Exception as e:
             st.error(f"Error : {e}")
