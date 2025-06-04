@@ -1,14 +1,49 @@
 import streamlit as st
+import pandas as pd
+import numpy as np
 import subprocess
-import os
-import joblib
 import requests
-import sklearn
+import joblib
+import os
+
+def map_port(port):
+    if port == 21:
+        return 1  # FTP
+    elif port == 22:
+        return 2  # SSH
+    elif port == 53:
+        return 3  # DNS
+    elif port == 80:
+        return 4  # HTTP
+    elif port == 443:
+        return 5  # HTTPS
+    else:
+        return 6  # Other
+
+def process_dataframe(df):
+    # replace space in columns name with underscore
+    df.columns = df.columns.str.strip().str.replace(' ', '_')
+
+    # drop objects type columns
+    columns_to_drop = [
+        'Flow_ID','Src_IP','Dst_IP','Src_Port','Protocol','Timestamp','Label'
+    ]
+
+    df = df.drop(columns=columns_to_drop)
+
+    # remove rows with missing and infinite values
+    df.replace([np.inf, -np.inf], np.nan, inplace = True)
+    df = df.dropna()
+    
+    # map destination port to 1-6 numbers
+    df['Dst_Port'] = df['Dst_Port'].apply(map_port)
+    
+    return df    
 
 def display_setup_logs():
     
     # CICFlowMeter setup
-    with st.status("Setting up CICFlowMeter-3.0...",expanded=True) as status:
+    with st.status("Setting up CICFlowMeter-3.0...",expanded=False) as status:
         try:
             # install libpcap-dev library
             st.write(":arrow_down: Installing libpcap-dev...")
@@ -18,7 +53,7 @@ def display_setup_logs():
             # CICflowmeter download if not exist
             if not os.path.exists("CICFlowMeter-3.0"):
                 # Download CICFlowMeter.zip from codeberg
-                st.write(":arrow_down: Downloading CICFlowMeter-3.0...")
+                st.write(":arrow_down: Downloading CICFlowMeter-3.0.zip...")
                 url = "https://codeberg.org/iortega/TCPDUMP_and_CICFlowMeter/archive/master:CICFlowMeters/CICFlowMeter-3.0.zip"
                 subprocess.run(["wget", url, "-O", "CICFlowMeter-3.0.zip"], check=True)
                 st.write(":white_check_mark: CICFlowMeter-3.0.zip downloaded.")
@@ -27,6 +62,11 @@ def display_setup_logs():
                 st.write(":open_file_folder: Extracting CICFlowMeter-3.0...")
                 subprocess.run(["unzip", "CICFlowMeter-3.0.zip", "-d", "CICFlowMeter-3.0"], check=True)
                 st.write(":white_check_mark: CICFlowMeter extracted.")
+                
+                # Setting executable permission 
+                st.write(":wrench: Configuring executable permission...")
+                subprocess.run(["chmod", "+x", "CICFlowMeter-3.0/tcpdump_and_cicflowmeter/bin/CICFlowMeter"], check=True)
+                st.write(":white_check_mark: Permission configured")
                 
                 # Clearing unused zip file
                 st.write(":wastebasket: Clearing .zip file...")
@@ -67,6 +107,7 @@ def display_setup_logs():
             # import model as using joblib
             st.write(":robot_face: Loading ML model...")
             model = joblib.load('RandomForest400IntPortCIC1718-2.pkl')
+            st.session_state.model_state = model
             st.write(":white_check_mark: ML Model loaded successfully.")
             st.info(model)
             
@@ -80,8 +121,17 @@ def display_setup_logs():
             status.update(label=":x: ML Model Setup Failed", state="error", expanded=True)
 
 def clear_uploaded_files():
+    # remove pcap files
     for filename in os.listdir("data/in"):
         filepath = os.path.join("data/in", filename)
+        try:
+            if os.path.isfile(filepath):
+                os.remove(filepath)
+        except Exception as e:
+            st.error(f"Failed to delete {filename}: {e}")
+    # remove csv files
+    for filename in os.listdir("data/out"):
+        filepath = os.path.join("data/out", filename)
         try:
             if os.path.isfile(filepath):
                 os.remove(filepath)
@@ -100,7 +150,7 @@ def main():
     st.set_page_config(
         page_title="Malicious .PCAP File Classifier",
         page_icon=":peacock:",
-        layout="centered",
+        layout="wide",
         initial_sidebar_state="expanded",
     )
 
@@ -174,16 +224,44 @@ def main():
             st.session_state.proceed_clicked = True
             st.rerun()
 
-    # show results only
+    # show result only
     if st.session_state.show_results:
-        st.info(f"This is your result for {uploaded_file.name}")
+        uploaded_filename = st.session_state.uploaded_filename
+        st.info(f"This is your result for {uploaded_filename}")
+        
+        columns = st.columns(3)
         # convert pcap to csv using cicflowmter
-        
-        # clean and process csv using data preprocess function
-        
-        # predict the attack using loaded ML Model (model)
-        
-        # show the result by displaying as text on screen
+        try: 
+            subprocess.run("CICFlowMeter-3.0/tcpdump_and_cicflowmeter/bin/CICFlowMeter",check=True)
+            csv_path = "data/out/"
+            csv_name = uploaded_filename[:-5] + "_ISCX.csv"
+            df = pd.read_csv(csv_path + csv_name)
+            df = process_dataframe(df)
+            model = st.session_state.model_state
+            
+            with columns[0]:
+                st.dataframe(df, use_container_width=True)
+            
+            # predict attack usign Ml Model
+            try: 
+                predictions = model.predict(df)
+                predictions_proba = model.predict_proba(df)
+                
+                # show predictions + proba
+                with columns[1]:
+                    st.dataframe(predictions,use_container_width=True)
+                
+                predictions_proba_df = pd.DataFrame(predictions_proba, columns=model.classes_)
+                predictions_proba_df['Predicted_Label'] = predictions
+
+                with columns[2]:
+                    st.dataframe(predictions_proba_df,use_container_width=True)
+                
+            except Exception as e:
+                st.error(f"Error making prediction: {e}")
+        except Exception as e:
+            st.error(f"Error converting pcap to csv: {e}")
+
         
         if st.button("Upload another file"):
             clear_uploaded_files()
@@ -210,6 +288,7 @@ def main():
                             with open(f"data/in/{uploaded_file.name}", "wb") as f:
                                 f.write(bytes_data)
                             mb_size = len(bytes_data) / (1024 * 1024)
+                            st.session_state.uploaded_filename = uploaded_file.name
                             st.success(f":file_folder: {uploaded_file.name} size {mb_size:.2f} MB uploaded successfully")
                             st.session_state.file_uploaded_successfully = True
                         except Exception as e:
