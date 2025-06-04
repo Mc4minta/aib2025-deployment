@@ -1,39 +1,82 @@
 import streamlit as st
-
 import subprocess
 import os
+import joblib
+import requests
+import sklearn
 
 import time
 
 def display_setup_logs():
+    
     # CICFlowMeter setup
-    with st.status("Setting up CICFlowMeter...",expanded=True) as status:
+    with st.status("Setting up CICFlowMeter-3.0...",expanded=True) as status:
         try:
+            # install libpcap-dev library
+            st.write(":arrow_down: Installing libpcap-dev...")
+            subprocess.run(["sudo","apt-get", "install", "-y", "libpcap-dev"], check=True)
+            st.write(":white_check_mark: libpcap-dev installed.")
+            
             # Download CICFlowMeter.zip from codeberge
-            st.write("Downloading CICFlowMeter...")
+            st.write(":arrow_down: Downloading CICFlowMeter-3.0...")
             wget_command = "https://codeberg.org/iortega/TCPDUMP_and_CICFlowMeter/archive/master:CICFlowMeters/CICFlowMeter-3.0.zip"
             subprocess.run(["wget", wget_command], check=True)
-            st.write("CICFlowMeter downloaded.")
+            st.write(":white_check_mark: CICFlowMeter-3.0.zip downloaded.")
             
             # Extracting CICFlowMeter from codeberge
-            st.write("Extracting CICFlowMeter...")
-            # Creating data/in data/out directories
-            st.write("Creating data/in data/out directories...")
+            st.write(":open_file_folder: Extracting CICFlowMeter-3.0...")
+            subprocess.run(["unzip", "CICFlowMeter-3.0.zip", "-d", "CICFlowMeter-3.0"], check=True)
+            st.write(":white_check_mark: CICFlowMeter extracted.")
             
-            status.update(label="CICFlowMeter Setup Complete!", state="complete", expanded=False)
+            # Clearing unused zip file
+            st.write(":wastebasket: Clearing .zip file...")
+            subprocess.run(["rm","CICFlowMeter-3.0.zip"], check=True)
+            st.write(":white_check_mark: CICFlowMeter-3.0.zip Cleared")
+            
+            # Creating data/in data/out directories
+            st.write(":file_folder: Creating data/in data/out directories...")
+            os.makedirs("data/in", exist_ok=True)
+            os.makedirs("data/out", exist_ok=True)
+            st.write(":white_check_mark: Directories created.")
+            
+            # updata status to indicate successful cicflowmeter setup
+            status.update(label=":white_check_mark: CICFlowMeter Setup Complete!", state="complete", expanded=False)
+            
         except subprocess.CalledProcessError as e:
-            st.error(f"Error during CICFlowMeter setup: {e}")
-            status.update(label="CICFlowMeter Setup Failed", state="error", expanded=True)
+            st.error(f":x: Error during CICFlowMeter setup: {e}")
+            status.update(label=":x: CICFlowMeter Setup Failed", state="error", expanded=True)
+            
+        except Exception as e:
+            st.error(f":x: An unexpected error occurred: {e}")
+            status.update(label=":x: CICFlowMeter Setup Failed", state="error", expanded=True)
+            
+    # Classification Model setup
+    with st.status("Setting up ML Model...",expanded=True) as status:
+        try:            
+            # downloading model from hugging face
+            st.write(":hugging_face: Downloading ML model...")
+            model_url = "https://huggingface.co/Mc4minta/RandomForest400IntPortCIC1718/resolve/main/RandomForest400IntPortCIC1718-2.pkl"
+            response = requests.get(model_url)
+            with open("RandomForest400IntPortCIC1718-2.pkl", "wb") as f:
+                f.write(response.content)
+            st.write(":white_check_mark: ML Model downloaded.")
+            
+            # import model as using joblib
+            st.write(":robot_face: Loading ML model...")
+            model = joblib.load('RandomForest400IntPortCIC1718-2.pkl')
+            st.write(":white_check_mark: ML Model loaded successfully.")
+            st.info(model)
+            
+            
+            status.update(label=":white_check_mark: ML Model Setup Complete", state="complete", expanded=False)
+        except subprocess.CalledProcessError as e:
+            st.error(f":x: Error during ML Model setup: {e}")
+            status.update(label=":x: ML Model Setup Failed", state="error", expanded=True)
+            
         except Exception as e:
             st.error(f"An unexpected error occurred: {e}")
-            status.update(label="CICFlowMeter Setup Failed", state="error", expanded=True)
-
-    # Classification Model setup
-    with st.status("Setting up ML Model...",expanded=True):
-        # downloading model from huggin face
-        st.write("Downloading ML model from huggingface...")
-        # import model as using joblib
-        st.write("Loading ML model...")
+            status.update(label=":x: ML Model Setup Failed", state="error", expanded=True)
+    time.sleep(0.5)
 
 def initial_setup():
     display_setup_logs()
@@ -43,6 +86,8 @@ def initial_setup():
     st.session_state.show_setup_logs = True
 
 def main():
+    
+    # page config
     st.set_page_config(
         page_title="Malicious .PCAP File Classifier",
         page_icon=":peacock:",
@@ -50,6 +95,7 @@ def main():
         initial_sidebar_state="expanded",
     )
 
+    # initial state setup
     if 'initial_setup_completed' not in st.session_state:
         st.session_state.initial_setup_completed = False
     if 'setup_failed' not in st.session_state:
@@ -59,6 +105,7 @@ def main():
     if 'proceed_clicked' not in st.session_state:
         st.session_state.proceed_clicked = False
 
+    # Header
     st.markdown("""
         <h1 style='text-align: center; color: #b5213b;'>
             AI Builders 2025
@@ -71,6 +118,7 @@ def main():
         </h3>
         """, unsafe_allow_html=True)
 
+    # css style for centered st.button
     st.markdown("""
         <style>
         div.stButton > button {
@@ -80,6 +128,7 @@ def main():
         </style>
     """, unsafe_allow_html=True)
 
+    # Logic for StartSetup Button
     if not st.session_state.initial_setup_completed and not st.session_state.setup_failed:
         if st.button("Start Setup"):
             st.session_state.initial_setup_attempted = True
@@ -91,6 +140,7 @@ def main():
                 st.session_state.initial_setup_completed = False
             st.rerun()
 
+    # Logic handling StartSetup button failling
     elif st.session_state.setup_failed:
         st.warning("Setup failed. Please try again.")
         if st.button("Start Setup"):
@@ -103,17 +153,18 @@ def main():
                 st.session_state.initial_setup_completed = False
             st.rerun()
 
+    # show complete only when complete
     if st.session_state.show_setup_logs:
         st.success(":tada: Setup Completed")
-        
-    time.sleep(5)
 
+    # Hide log when proceed is click
     if st.session_state.initial_setup_completed and not st.session_state.proceed_clicked:
         if st.button("Proceed"):
             st.session_state.show_setup_logs = False
             st.session_state.proceed_clicked = True
             st.rerun()
 
+    # Proceed to file upload when proceed is clicked
     if st.session_state.initial_setup_completed and st.session_state.proceed_clicked:
         try:
             st.info(":file_folder: Browse your file here")
