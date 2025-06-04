@@ -43,7 +43,7 @@ def process_dataframe(df):
 def display_setup_logs():
     
     # CICFlowMeter setup
-    with st.status("Setting up CICFlowMeter-3.0...",expanded=False) as status:
+    with st.status("Setting up CICFlowMeter-3.0...",expanded=True) as status:
         try:
             # install libpcap-dev library
             st.write(":arrow_down: Installing libpcap-dev...")
@@ -150,7 +150,7 @@ def main():
     st.set_page_config(
         page_title="Malicious .PCAP File Classifier",
         page_icon=":peacock:",
-        layout="wide",
+        layout="centered",
         initial_sidebar_state="expanded",
     )
 
@@ -229,7 +229,6 @@ def main():
         uploaded_filename = st.session_state.uploaded_filename
         st.info(f"This is your result for {uploaded_filename}")
         
-        columns = st.columns(3)
         # convert pcap to csv using cicflowmter
         try: 
             subprocess.run("CICFlowMeter-3.0/tcpdump_and_cicflowmeter/bin/CICFlowMeter",check=True)
@@ -239,24 +238,53 @@ def main():
             df = process_dataframe(df)
             model = st.session_state.model_state
             
-            with columns[0]:
-                st.dataframe(df, use_container_width=True)
-            
-            # predict attack usign Ml Model
-            try: 
+            # Initialize session state for display toggles
+            if "show_df" not in st.session_state:
+                st.session_state.show_df = False
+            if "show_proba" not in st.session_state:
+                st.session_state.show_proba = False
+            if "show_predictions" not in st.session_state:
+                st.session_state.show_predictions = True  # default
+
+            try:
                 predictions = model.predict(df)
                 predictions_proba = model.predict_proba(df)
-                
-                # show predictions + proba
-                with columns[1]:
-                    st.dataframe(predictions,use_container_width=True)
-                
+
                 predictions_proba_df = pd.DataFrame(predictions_proba, columns=model.classes_)
                 predictions_proba_df['Predicted_Label'] = predictions
 
-                with columns[2]:
-                    st.dataframe(predictions_proba_df,use_container_width=True)
-                
+                col1, col2, col3 = st.columns(3)
+
+                with col1:
+                    if st.button("Show Raw Features"):
+                        st.session_state.show_df = True
+                        st.session_state.show_predictions = False
+                        st.session_state.show_proba = False
+
+                with col2:
+                    if st.button("Show Predictions"):
+                        st.session_state.show_df = False
+                        st.session_state.show_predictions = True
+                        st.session_state.show_proba = False
+
+                with col3:
+                    if st.button("Show Prediction Probabilities"):
+                        st.session_state.show_df = False
+                        st.session_state.show_predictions = False
+                        st.session_state.show_proba = True
+
+                # Display according to state
+                if st.session_state.show_df:
+                    st.dataframe(df, use_container_width=True)
+
+                if st.session_state.show_predictions:
+                    prediction_counts = pd.Series(predictions).value_counts().sort_index()
+                    pd.Series(predictions).value_counts().sort_index()
+                    st.bar_chart(prediction_counts)
+
+                if st.session_state.show_proba:
+                    st.dataframe(predictions_proba_df, use_container_width=True)
+
             except Exception as e:
                 st.error(f"Error making prediction: {e}")
         except Exception as e:
@@ -264,6 +292,9 @@ def main():
 
         
         if st.button("Upload another file"):
+            st.session_state.show_df = False
+            st.session_state.show_proba = False
+            st.session_state.show_predictions = True
             clear_uploaded_files()
             st.session_state.show_results = False
             st.session_state.file_uploaded_successfully = False
