@@ -79,6 +79,15 @@ def display_setup_logs():
             st.error(f"An unexpected error occurred: {e}")
             status.update(label=":x: ML Model Setup Failed", state="error", expanded=True)
 
+def clear_uploaded_files():
+    for filename in os.listdir("data/in"):
+        filepath = os.path.join("data/in", filename)
+        try:
+            if os.path.isfile(filepath):
+                os.remove(filepath)
+        except Exception as e:
+            st.error(f"Failed to delete {filename}: {e}")
+
 def initial_setup():
     display_setup_logs()
     st.session_state.initial_setup_completed = True
@@ -104,6 +113,10 @@ def main():
         st.session_state.show_setup_logs = False
     if 'proceed_clicked' not in st.session_state:
         st.session_state.proceed_clicked = False
+    if 'show_results' not in st.session_state:
+        st.session_state.show_results = False
+    if 'file_uploaded_successfully' not in st.session_state:
+        st.session_state.file_uploaded_successfully = False
 
     # Header
     st.markdown("""
@@ -161,8 +174,26 @@ def main():
             st.session_state.proceed_clicked = True
             st.rerun()
 
+    # show results only
+    if st.session_state.show_results:
+        st.info(f"This is your result for {uploaded_file.name}")
+        # convert pcap to csv using cicflowmter
+        
+        # clean and process csv using data preprocess function
+        
+        # predict the attack using loaded ML Model (model)
+        
+        # show the result by displaying as text on screen
+        
+        if st.button("Upload another file"):
+            clear_uploaded_files()
+            st.session_state.show_results = False
+            st.session_state.file_uploaded_successfully = False
+            st.session_state.proceed_clicked = True
+            st.rerun()
+
     # Proceed to file upload when proceed is clicked
-    if st.session_state.initial_setup_completed and st.session_state.proceed_clicked:
+    elif st.session_state.initial_setup_completed and st.session_state.proceed_clicked:
         try:
             st.info(":file_folder: Browse your file here")
 
@@ -172,18 +203,24 @@ def main():
 
             # Show Upload button only when a file is selected
             if uploaded_file is not None:
-                if st.button("Upload File"):
-                    bytes_data = uploaded_file.read()
-                    try:
-                        with open(f"data/in/{uploaded_file.name}", "wb") as f:
-                            f.write(bytes_data)
-                        mb_size = len(bytes_data) / (1024 * 1024)
-                        st.success(f":file_folder: {uploaded_file.name} size {mb_size:.2f} MB uploaded successfully")
-                        
-                    except Exception as e:
-                        st.error("Error uploading file: {e}")
+                with st.container():
+                    if st.button("Upload File"):
+                        bytes_data = uploaded_file.read()
+                        try:
+                            with open(f"data/in/{uploaded_file.name}", "wb") as f:
+                                f.write(bytes_data)
+                            mb_size = len(bytes_data) / (1024 * 1024)
+                            st.success(f":file_folder: {uploaded_file.name} size {mb_size:.2f} MB uploaded successfully")
+                            st.session_state.file_uploaded_successfully = True
+                        except Exception as e:
+                            st.error(f"Error uploading file: {e}")
+                            st.session_state.file_uploaded_successfully = False
+
+            # Show See Attacks only when upload was successful
+            if st.session_state.file_uploaded_successfully:
                 if st.button("See Attacks"):
-                    st.info("This is your result")
+                    st.session_state.show_results = True
+                    st.rerun()
 
         except Exception as e:
             st.error(f"Error : {e}")
