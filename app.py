@@ -74,7 +74,7 @@ def main():
             st.rerun()
 
     elif st.session_state.setup_failed:
-        st.warning("Setup failed previously. Please try again.")
+        st.warning("Setup failed. Please try again.")
         if st.button("Start Setup"):
             st.session_state.initial_setup_attempted = True
             try:
@@ -86,7 +86,6 @@ def main():
             st.rerun()
 
     if st.session_state.show_setup_logs:
-        display_setup_logs()
         st.success(":tada: Setup Completed")
 
     if st.session_state.initial_setup_completed and not st.session_state.proceed_clicked:
