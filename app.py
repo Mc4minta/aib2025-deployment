@@ -63,7 +63,7 @@ def display_setup_logs():
                 with open("RandomForest400IntPortCIC1718-2.pkl", "wb") as f:
                     f.write(response.content)
                 st.write(":white_check_mark: ML Model downloaded.")
-            
+
             # import model as using joblib
             st.write(":robot_face: Loading ML model...")
             model = joblib.load('RandomForest400IntPortCIC1718-2.pkl')
@@ -165,7 +165,26 @@ def main():
     if st.session_state.initial_setup_completed and st.session_state.proceed_clicked:
         try:
             st.info(":file_folder: Browse your file here")
-            # Add your file Browse and classification logic here
+
+            uploaded_file = st.file_uploader(
+                "Choose a PCAP file", accept_multiple_files=False, type=["pcap"]
+            )
+
+            # Show Upload button only when a file is selected
+            if uploaded_file is not None:
+                if st.button("Upload File"):
+                    bytes_data = uploaded_file.read()
+                    try:
+                        with open(f"data/in/{uploaded_file.name}", "wb") as f:
+                            f.write(bytes_data)
+                        mb_size = len(bytes_data) / (1024 * 1024)
+                        st.success(f":file_folder: {uploaded_file.name} size {mb_size:.2f} MB uploaded successfully")
+                        
+                    except Exception as e:
+                        st.error("Error uploading file: {e}")
+                if st.button("See Attacks"):
+                    st.info("This is your result")
+
         except Exception as e:
             st.error(f"Error : {e}")
 
