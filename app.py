@@ -5,8 +5,6 @@ import joblib
 import requests
 import sklearn
 
-import time
-
 def display_setup_logs():
     
     # CICFlowMeter setup
@@ -39,7 +37,6 @@ def display_setup_logs():
             os.makedirs("data/out", exist_ok=True)
             st.write(":white_check_mark: Directories created.")
             
-            # updata status to indicate successful cicflowmeter setup
             status.update(label=":white_check_mark: CICFlowMeter Setup Complete!", state="complete", expanded=False)
             
         except subprocess.CalledProcessError as e:
