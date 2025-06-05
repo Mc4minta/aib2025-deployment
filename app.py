@@ -6,6 +6,8 @@ import requests
 import joblib
 import os
 
+import time
+
 def map_port(port):
     if port == 21:
         return 1  # FTP
@@ -215,7 +217,10 @@ def main():
                 st.session_state.setup_failed = True
                 st.session_state.initial_setup_completed = False
             st.rerun()
-
+    
+    # delay until complete shown
+    time.sleep(1)
+    
     # show success and proceed after setup
     if st.session_state.initial_setup_completed and not st.session_state.proceed_clicked:
         st.success(":tada: Setup Completed")
