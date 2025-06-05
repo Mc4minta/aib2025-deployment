@@ -49,7 +49,7 @@ def display_setup_logs():
         try:
             # install libpcap-dev library
             st.write(":arrow_down: Installing libpcap-dev...")
-            subprocess.run(["sudo","apt-get", "install", "-y", "libpcap-dev"], check=True)
+            subprocess.run(["apt-get", "install", "-y", "libpcap-dev"], check=True)
             st.write(":white_check_mark: libpcap-dev installed.")
             
             # CICflowmeter download if not exist
