@@ -5,17 +5,15 @@ import subprocess
 import requests
 import joblib
 import os
-import shutil # For moving files
-# add something
+import shutil
+
 # Assuming these are in your project directory
-# Make sure these files (pipeline.py, merge_flow.py, simulate_flow.py, utils.py)
-# are accessible in the same directory as your Streamlit app.
-# And ensure they contain the functions expected by your pipeline.
-from pipeline import * # This is where your preprocess_dataframe and other pipeline steps might be
+# Removed 'from pipeline import *' as per your request
 from merge_flow import *
 from simulate_flow import *
-from utils import * # This is where choose_label is expected to be
+from utils import * # This is where map_port, preprocess_dataframe, and choose_label are now expected to be
 
+# --- Removed helper functions (map_port, preprocess_dataframe) as they are assumed to be in utils.py ---
 
 def display_setup_logs():
     # CICFlowMeter setup
@@ -23,6 +21,8 @@ def display_setup_logs():
         try:
             # install libpcap-dev library
             st.write(":arrow_down: Installing libpcap-dev...")
+            # Use 'apt-get update' before install to ensure package lists are current
+            subprocess.run(["sudo", "apt-get", "update"], check=True, capture_output=True, text=True)
             subprocess.run(["sudo","apt-get", "install", "-y", "libpcap-dev"], check=True, capture_output=True, text=True)
             st.write(":white_check_mark: libpcap-dev installed.")
             
@@ -40,7 +40,7 @@ def display_setup_logs():
                 
                 # Extracting CICFlowMeter from codeberge
                 st.write(":open_file_folder: Extracting CICFlowMeter-3.0...")
-                subprocess.run(["unzip", "CICFlowMeter-3.0.zip", "-d", "CICFlowMeter-3.0"], check=True, capture_output=True, text=True)
+                subprocess.run(["unzip", "-o", "CICFlowMeter-3.0.zip", "-d", "CICFlowMeter-3.0"], check=True, capture_output=True, text=True) # Added -o for overwrite
                 st.write(":white_check_mark: CICFlowMeter extracted.")
                 
                 # Setting executable permission 
@@ -101,7 +101,6 @@ def display_setup_logs():
             model = joblib.load('RandomForest400IntPortCIC1718-2.pkl')
             st.session_state.model_state = model
             st.write(":white_check_mark: ML Model loaded successfully.")
-            # st.info(model) # Removed this as it can be verbose
             
             status.update(label=":white_check_mark: ML Model Setup Complete", state="complete", expanded=False)
             return True # Indicate success
@@ -118,13 +117,11 @@ def display_setup_logs():
             st.session_state.initial_setup_completed = False
             return False
 
-@st.cache_data(show_spinner=False) # Cache setup to avoid rerunning if setup is already complete
+@st.cache_data(show_spinner=False)
 def initial_setup_cached():
-    """Wrapper to cache initial setup for efficiency."""
     if st.session_state.get('initial_setup_completed', False) and not st.session_state.get('setup_failed', False):
-        return True # Already completed successfully
+        return True
     
-    # Reset flags before attempting setup
     st.session_state.initial_setup_completed = False
     st.session_state.setup_failed = False
     
@@ -132,7 +129,7 @@ def initial_setup_cached():
     
     st.session_state.initial_setup_completed = success
     st.session_state.setup_failed = not success
-    st.session_state.show_setup_logs = True # Keep this for visibility
+    st.session_state.show_setup_logs = True
     return success
 
 def clear_uploaded_files():
@@ -155,18 +152,14 @@ def clear_uploaded_files():
             except Exception as e:
                 st.error(f"Failed to delete {filename} from data/out: {e}")
     
-    # Clear model if it exists in session_state, to ensure it's reloaded if setup fails
     if 'model_state' in st.session_state:
         del st.session_state.model_state
 
-# --- NEW: Function to run the entire prediction pipeline ---
-def run_prediction_pipeline(uploaded_pcap_name, model):
+def run_prediction_pipeline(pcap_file_path, uploaded_pcap_name, model):
     data_in_dir = 'data/in/'
     data_out_dir = 'data/out/'
     
-    # Dynamically set file_name based on uploaded pcap
     file_name_without_ext = os.path.splitext(uploaded_pcap_name)[0]
-    pcap_file_path = f'{data_in_dir}{uploaded_pcap_name}' # Use full uploaded name
     index_file_path = f'{data_out_dir}{file_name_without_ext}_index.csv'
     flow_file_path = f'{data_out_dir}{file_name_without_ext}_ISCX.csv'
     prediction_file_path = f'{data_out_dir}{file_name_without_ext}_prediction.csv'
@@ -183,20 +176,19 @@ def run_prediction_pipeline(uploaded_pcap_name, model):
 
             # Step 2: Simulate flow with packet indices
             pipeline_status.write(":chart_with_upwards_trend: Extracting flows and simulating packet indices...")
-            # Ensure pcap_file_path passed here is the absolute path or correct relative path
             simulated_flows_df, total_packets = extract_flows_from_pcap(pcap_file_path)
-            simulated_flows_df['Total_Packets'] = total_packets # Keep total packets info
+            simulated_flows_df['Total_Packets'] = total_packets
             simulated_flows_df.to_csv(index_file_path, index=False)
             pipeline_status.write(f":white_check_mark: Simulated flows extracted. Total packets: {total_packets}")
 
             # Step 3: Merge packet indices flow with original flow
             pipeline_status.write(":handshake: Merging simulated and original flow data...")
             simulated_df, _ = read_flows_to_dataframe(index_file_path, is_simulated_output=True)
-            original_df, _ = read_flows_to_dataframe(flow_file_path, is_simulated_output=False) # This file should be created by CICFlowMeter
+            original_df, _ = read_flows_to_dataframe(flow_file_path, is_simulated_output=False)
             
             merged_df = merge_flows_and_return_dataframe(simulated_df, original_df)
-            merged_df['Total_Packets'] = total_packets # Ensure total_packets is consistent after merge
-            merged_df.to_csv(index_file_path, index=False) # Overwrite index file with merged data
+            merged_df['Total_Packets'] = total_packets
+            merged_df.to_csv(index_file_path, index=False)
             pipeline_status.write(":white_check_mark: Flow data merged successfully.")
 
             # --- START OF PREDICTION PIPELINE (integrated) ---
@@ -214,8 +206,8 @@ def run_prediction_pipeline(uploaded_pcap_name, model):
 
             # 2. Preprocess Data for Model Prediction
             pipeline_status.write(":gear: Preprocessing data for prediction...")
-            df = preprocess_dataframe(merged_df.copy()) # Pass a copy to avoid modifying original merged_df
-            total_packets = df['Total_Packets'].iloc[0] # Get total_packets before dropping
+            df = preprocess_dataframe(merged_df.copy())
+            total_packets = df['Total_Packets'].iloc[0]
             df = df.drop(columns=['Total_Packets'])
             original_flow_indices = df.index
 
@@ -242,7 +234,7 @@ def run_prediction_pipeline(uploaded_pcap_name, model):
             # 6. Group by Packet Indices and Aggregate Features
             pipeline_status.write(":clipboard: Aggregating features by packet index...")
             final_df_prediction = df_prediction_expanded.groupby('Packet_Indices').agg(
-                Label=('Label', lambda x: choose_label(list(x))), # Apply choose_label for the final packet label
+                Label=('Label', lambda x: choose_label(list(x))),
                 Source_IP=('Src IP', 'first'),
                 Destination_IP=('Dst IP', 'first'),
                 Source_Port=('Src Port', 'first'),
@@ -270,7 +262,6 @@ def run_prediction_pipeline(uploaded_pcap_name, model):
             ).reset_index()
             pipeline_status.write(":white_check_mark: Aggregation complete.")
 
-            # Convert appropriate columns to nullable integer type ('Int64')
             for col in [
                 'Source_Port', 'Destination_Port', 'Protocol',
                 'Fwd_Seg_Size_Min', 'Init_Fwd_Win_Byts', 'Flow_Duration',
@@ -344,9 +335,8 @@ def run_prediction_pipeline(uploaded_pcap_name, model):
             final_df_prediction.sort_values(by='Packet_Indices', inplace=True)
             final_df_prediction.reset_index(drop=True, inplace=True)
 
-            final_df_prediction.to_csv(prompt_file_path, index=False) # Full details
+            final_df_prediction.to_csv(prompt_file_path, index=False)
             
-            # Prepare the result for display
             columns_to_keep_for_display = [
                 'Packet_Indices',
                 'Label',
@@ -357,10 +347,10 @@ def run_prediction_pipeline(uploaded_pcap_name, model):
                 'Protocol',
             ]
             display_df = final_df_prediction[columns_to_keep_for_display].copy()
-            display_df.to_csv(prediction_file_path, index=False) # Reduced details for prediction output file
+            display_df.to_csv(prediction_file_path, index=False)
 
             pipeline_status.update(label=":white_check_mark: Analysis Complete!", state="complete", expanded=False)
-            return display_df, total_packets # Return the result DataFrame and total packets
+            return display_df, total_packets
     except subprocess.CalledProcessError as e:
         st.error(f":x: Pipeline Error during command execution: {e.cmd} returned {e.returncode}. Output: {e.stdout}\nError: {e.stderr}")
         return None, 0
@@ -370,7 +360,6 @@ def run_prediction_pipeline(uploaded_pcap_name, model):
 
 
 def main():
-    # Page config
     st.set_page_config(
         page_title="Malicious .PCAP File Classifier",
         page_icon=":peacock:",
@@ -378,7 +367,6 @@ def main():
         initial_sidebar_state="expanded",
     )
 
-    # Initial state setup
     if 'initial_setup_completed' not in st.session_state:
         st.session_state.initial_setup_completed = False
     if 'setup_failed' not in st.session_state:
@@ -389,16 +377,15 @@ def main():
         st.session_state.proceed_clicked = False
     if 'show_results' not in st.session_state:
         st.session_state.show_results = False
-    if 'file_uploaded_successfully' not in st.session_state:
-        st.session_state.file_uploaded_successfully = False
-    if 'uploaded_filename' not in st.session_state:
-        st.session_state.uploaded_filename = None
+    if 'file_selected_successfully' not in st.session_state:
+        st.session_state.file_selected_successfully = False
+    if 'selected_filename' not in st.session_state:
+        st.session_state.selected_filename = None
     if 'prediction_results_df' not in st.session_state:
         st.session_state.prediction_results_df = None
     if 'total_packets' not in st.session_state:
         st.session_state.total_packets = 0
 
-    # Header
     st.markdown("""
         <h1 style='text-align: center; color: #b5213b;'>
             AI Builders 2025
@@ -411,7 +398,6 @@ def main():
         </h3>
         """, unsafe_allow_html=True)
 
-    # CSS style for centered st.button
     st.markdown("""
         <style>
         div.stButton > button {
@@ -424,19 +410,15 @@ def main():
     # --- Setup Logic ---
     if not st.session_state.initial_setup_completed and not st.session_state.setup_failed:
         if st.button("Start Setup"):
-            # This button initiates the cached setup function
             initial_setup_cached()
-            st.rerun() # Rerun to reflect setup status
+            st.rerun()
 
-    # Logic handling StartSetup button failing
     elif st.session_state.setup_failed:
         st.warning("Setup failed. Please try again.")
         if st.button("Start Setup"):
-            # This button initiates the cached setup function
             initial_setup_cached()
-            st.rerun() # Rerun to reflect setup status
+            st.rerun()
 
-    # Show success and proceed after setup
     if st.session_state.initial_setup_completed and not st.session_state.proceed_clicked:
         st.success(":tada: Setup Completed")
         if st.button("Proceed"):
@@ -447,63 +429,92 @@ def main():
     # --- Main Application Logic (after setup and proceed) ---
     if st.session_state.initial_setup_completed and st.session_state.proceed_clicked:
         if not st.session_state.show_results:
-            st.info(":file_folder: Browse your file here")
+            st.info(":file_folder: Choose a file for analysis.")
 
-            uploaded_file = st.file_uploader(
-                "Choose a PCAP file", accept_multiple_files=False, type=["pcap"]
+            # --- File Selection Options ---
+            selection_method = st.radio(
+                "How would you like to provide the PCAP file?",
+                ("Upload a PCAP file", "Choose from Sample Data"),
+                key="selection_method"
             )
 
-            if uploaded_file is not None:
-                # Use a unique key for the button to prevent issues if file changes
-                if st.button("Upload File and Analyze", key="upload_and_analyze_button"):
-                    bytes_data = uploaded_file.read()
-                    
-                    # Ensure data/in directory exists before writing
+            pcap_to_analyze_bytes = None # Renamed to clearly indicate bytes data
+            pcap_filename_for_analysis = None # Renamed to clearly indicate filename for the pipeline
+
+            if selection_method == "Upload a PCAP file":
+                uploaded_file = st.file_uploader(
+                    "Choose a PCAP file", accept_multiple_files=False, type=["pcap"]
+                )
+                if uploaded_file is not None:
+                    pcap_to_analyze_bytes = uploaded_file.read()
+                    pcap_filename_for_analysis = uploaded_file.name
+
+            elif selection_method == "Choose from Sample Data":
+                sample_data_dir = "sample_data"
+                if os.path.exists(sample_data_dir):
+                    pcap_files = [f for f in os.listdir(sample_data_dir) if f.endswith('.pcap')]
+                    if pcap_files:
+                        selected_sample_file = st.selectbox(
+                            "Select a sample PCAP file:",
+                            ["-- Select a file --"] + sorted(pcap_files),
+                            key="selected_sample_file"
+                        )
+                        if selected_sample_file != "-- Select a file --":
+                            pcap_filename_for_analysis = selected_sample_file
+                            sample_file_path = os.path.join(sample_data_dir, pcap_filename_for_analysis)
+                            with open(sample_file_path, "rb") as f:
+                                pcap_to_analyze_bytes = f.read()
+                    else:
+                        st.warning("No .pcap files found in the 'sample_data' folder.")
+                else:
+                    st.error("The 'sample_data' folder does not exist. Please create it and add .pcap files.")
+
+            # --- Analysis Button ---
+            if pcap_to_analyze_bytes is not None and pcap_filename_for_analysis is not None:
+                if st.button("Start Analysis", key="start_analysis_button"):
+                    # Save the chosen PCAP (uploaded or sample) to data/in
                     os.makedirs('data/in', exist_ok=True)
-                    
-                    pcap_save_path = os.path.join("data/in", uploaded_file.name)
+                    target_pcap_path = os.path.join("data/in", pcap_filename_for_analysis)
                     try:
-                        with open(pcap_save_path, "wb") as f:
-                            f.write(bytes_data)
-                        mb_size = len(bytes_data) / (1024 * 1024)
-                        st.session_state.uploaded_filename = uploaded_file.name
-                        st.success(f":file_folder: {uploaded_file.name} size {mb_size:.2f} MB uploaded successfully. Starting analysis...")
-                        st.session_state.file_uploaded_successfully = True
+                        with open(target_pcap_path, "wb") as f:
+                            f.write(pcap_to_analyze_bytes) # Use the bytes data here
+                        mb_size = len(pcap_to_analyze_bytes) / (1024 * 1024)
+                        st.session_state.selected_filename = pcap_filename_for_analysis
+                        st.success(f":file_folder: '{pcap_filename_for_analysis}' size {mb_size:.2f} MB selected. Starting analysis...")
+                        st.session_state.file_selected_successfully = True
                         
-                        # --- Run the new prediction pipeline ---
-                        model = st.session_state.model_state # Get the loaded model from session state
+                        model = st.session_state.model_state
                         if model:
-                            results_df, total_p = run_prediction_pipeline(uploaded_file.name, model)
+                            results_df, total_p = run_prediction_pipeline(target_pcap_path, pcap_filename_for_analysis, model)
                             st.session_state.prediction_results_df = results_df
                             st.session_state.total_packets = total_p
                             st.session_state.show_results = True
-                            st.rerun() # Rerun to display results
+                            st.rerun()
                         else:
                             st.error("ML model not loaded. Please ensure setup completed successfully.")
-                            st.session_state.file_uploaded_successfully = False # Reset if analysis fails
-                            st.session_state.show_results = False # Don't show results
-                            clear_uploaded_files() # Clean up
+                            st.session_state.file_selected_successfully = False
+                            st.session_state.show_results = False
+                            clear_uploaded_files()
 
                     except Exception as e:
-                        st.error(f"Error uploading or initiating analysis: {e}")
-                        st.session_state.file_uploaded_successfully = False
+                        st.error(f"Error during file processing or analysis: {e}")
+                        st.session_state.file_selected_successfully = False
                         st.session_state.show_results = False
-                        clear_uploaded_files() # Clean up failed upload/analysis
+                        clear_uploaded_files()
 
         # Display results once available
         if st.session_state.show_results and st.session_state.prediction_results_df is not None:
-            uploaded_filename = st.session_state.uploaded_filename
+            selected_filename = st.session_state.selected_filename
             total_packets = st.session_state.total_packets
-            st.subheader(f"Analysis Results for '{uploaded_filename}'")
+            st.subheader(f"Analysis Results for '{selected_filename}'")
             st.info(f"Total packets analyzed: **{total_packets}**")
             
             prediction_df = st.session_state.prediction_results_df
             
-            # Initialize display toggles if not already set (for first time results are shown)
             if "show_df" not in st.session_state:
                 st.session_state.show_df = False
             if "show_predictions" not in st.session_state:
-                st.session_state.show_predictions = True # default
+                st.session_state.show_predictions = True
 
             col1, col2 = st.columns(2)
 
@@ -517,7 +528,6 @@ def main():
                     st.session_state.show_df = False
                     st.session_state.show_predictions = True
 
-            # Display according to state
             if st.session_state.show_predictions:
                 st.write("### Prediction Summary (Packet Count by Label)")
                 if not prediction_df.empty:
@@ -531,9 +541,7 @@ def main():
                 st.write("### Packet-Level Prediction Details")
                 st.dataframe(prediction_df, use_container_width=True)
 
-            # Option to download the prediction CSV
-            # Read the file again to ensure it's fresh for download
-            output_prediction_file = os.path.join('data', 'out', os.path.splitext(uploaded_filename)[0] + '_prediction.csv')
+            output_prediction_file = os.path.join('data', 'out', os.path.splitext(selected_filename)[0] + '_prediction.csv')
             if os.path.exists(output_prediction_file):
                 with open(output_prediction_file, "rb") as file:
                     btn = st.download_button(
@@ -544,21 +552,16 @@ def main():
                         help="Download the CSV file containing packet-level predictions."
                     )
             
-            if st.button("Upload another file", key="upload_another_file_button"):
-                clear_uploaded_files() # Clear all data/in and data/out
+            if st.button("Analyze another file", key="analyze_another_file_button"):
+                clear_uploaded_files()
                 st.session_state.show_results = False
-                st.session_state.file_uploaded_successfully = False
-                st.session_state.proceed_clicked = True # Remain in 'proceed' state
-                st.session_state.prediction_results_df = None # Clear previous results
+                st.session_state.file_selected_successfully = False
+                st.session_state.proceed_clicked = True
+                st.session_state.prediction_results_df = None
                 st.session_state.total_packets = 0
-                # Reset display toggles for the next upload
                 st.session_state.show_df = False
                 st.session_state.show_predictions = True
                 st.rerun()
-
-    # Handle if setup was successful but proceed wasn't clicked, and then user navigates away
-    # or if some state gets messed up. This ensures the app doesn't get stuck.
-    # No additional code needed here, the above logic handles it.
 
 if __name__ == "__main__":
     main()
