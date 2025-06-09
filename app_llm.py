@@ -7,31 +7,32 @@ import joblib
 import os
 import shutil
 import google.generativeai as genai
-import sys # Import sys for potential exit if truly needed (though st.stop() is preferred in Streamlit)
+import sys
 
-# Assuming these are in your project directory (or adjust paths if they are elsewhere)
-from merge_flow import *
-from simulate_flow import *
-from utils import * # This is where map_port, preprocess_dataframe, and choose_label are now expected to be
+# Importing helper functions from separate modules
+# Ensure these files (merge_flow.py, simulate_flow.py, utils.py) are in the same directory
+# as this app_llm.py script.
+from merge_flow import read_flows_to_dataframe, merge_flows_and_return_dataframe
+from simulate_flow import extract_flows_from_pcap
+from utils import map_port, preprocess_dataframe, choose_label
 
-# --- LLM Configuration Function (only contains genai.configure, no st. commands) ---
+
+# --- LLM Configuration Function ---
 @st.cache_resource(show_spinner="Connecting to Gemini...")
-def configure_gemini(api_key): # Now takes api_key as an argument
+def configure_gemini(api_key):
     try:
         genai.configure(api_key=api_key)
         model = genai.GenerativeModel(GEMINI_MODEL)
         return model
     except Exception as e:
-        # Don't use st.error here, as this function is cached and called before page_config
-        # We'll handle the error display in main()
-        st.exception(e) # This is okay for debugging, but not for final user message
+        print(f"Error configuring Gemini (within cache_resource): {e}") # Log to console
         return None
 
 # Global constant for Gemini model
 GEMINI_MODEL = "gemini-1.5-flash"
 
 
-# --- CICFlowMeter and ML Model Setup Functions (UNCHANGED) ---
+# --- CICFlowMeter and ML Model Setup Functions ---
 def display_setup_logs():
     # CICFlowMeter setup
     with st.status("Setting up CICFlowMeter-3.0...",expanded=True, state="running") as status:
@@ -135,11 +136,10 @@ def display_setup_logs():
             st.session_state.initial_setup_completed = False
             return False
 
+# MODIFIED: Added cache_key_for_setup argument
 @st.cache_data(show_spinner=False)
-def initial_setup_cached():
-    if st.session_state.get('initial_setup_completed', False) and not st.session_state.get('setup_failed', False):
-        return True
-    
+def initial_setup_cached(cache_key_for_setup):
+    # These resets are crucial for the first run or after "Analyze another file"
     st.session_state.initial_setup_completed = False
     st.session_state.setup_failed = False
     
@@ -147,7 +147,7 @@ def initial_setup_cached():
     
     st.session_state.initial_setup_completed = success
     st.session_state.setup_failed = not success
-    st.session_state.show_setup_logs = True
+    st.session_state.show_setup_logs = True # Ensure logs are displayed if setup was just run
     return success
 
 def clear_uploaded_files():
@@ -170,10 +170,11 @@ def clear_uploaded_files():
             except Exception as e:
                 st.error(f"Failed to delete {filename} from data/out: {e}")
     
+    # Safely delete model_state if it exists
     if 'model_state' in st.session_state:
         del st.session_state.model_state
 
-# --- Prediction Pipeline (UNCHANGED) ---
+# --- Prediction Pipeline ---
 def run_prediction_pipeline(pcap_file_path, uploaded_pcap_name, model):
     data_in_dir = 'data/in/'
     data_out_dir = 'data/out/'
@@ -226,8 +227,10 @@ def run_prediction_pipeline(pcap_file_path, uploaded_pcap_name, model):
             # 2. Preprocess Data for Model Prediction
             pipeline_status.write(":gear: Preprocessing data for prediction...")
             df = preprocess_dataframe(merged_df.copy())
-            total_packets = df['Total_Packets'].iloc[0]
-            df = df.drop(columns=['Total_Packets'])
+            total_packets = df['Total_Packets'].iloc[0] if 'Total_Packets' in df.columns and not df.empty else 0 # Ensure total_packets is correctly retrieved
+            if 'Total_Packets' in df.columns:
+                df = df.drop(columns=['Total_Packets'])
+            
             original_flow_indices = df.index
 
             if 'Simulated_Packet_Indices' in df.columns:
@@ -238,7 +241,6 @@ def run_prediction_pipeline(pcap_file_path, uploaded_pcap_name, model):
 
             # 3. Perform Prediction (per-flow prediction)
             pipeline_status.write(":robot_face: Performing flow-level predictions...")
-            model.predict(df_for_prediction) # Ensure 'model' is actually used
             flow_predictions = model.predict(df_for_prediction)
             pipeline_status.write(":white_check_mark: Predictions complete.")
 
@@ -422,7 +424,7 @@ Given these details, please explain:
 
 # --- Streamlit Main Function ---
 def main():
-    # 1. Set page config FIRST
+    # 1. Set page config FIRST. This must be the very first Streamlit command.
     st.set_page_config(
         page_title="Malicious .PCAP File Classifier",
         page_icon=":peacock:",
@@ -431,7 +433,6 @@ def main():
     )
 
     # 2. Then perform API key check and Gemini model initialization
-    # It's better to fetch the API key here
     api_key = os.environ.get("GOOGLE_API_KEY")
     if not api_key:
         st.error("🚨 GOOGLE_API_KEY environment variable not set.")
@@ -445,9 +446,10 @@ def main():
     # Pass the fetched api_key
     gemini_model = configure_gemini(api_key) 
     if gemini_model is None:
-        # configure_gemini already displayed error, so just stop
-        st.info("Gemini model could not be initialized. Please check your API key and connection.")
+        # configure_gemini already logged an error, so just provide a user-friendly message and stop
+        st.error("Gemini model could not be initialized. Please check your API key and network connection.")
         st.stop() # Halt execution if Gemini model couldn't be configured
+
 
     # Initialize session states (these can be after set_page_config)
     if 'initial_setup_completed' not in st.session_state:
@@ -470,6 +472,9 @@ def main():
         st.session_state.total_packets = 0
     if 'prompt_csv_path' not in st.session_state: # New: Store path to the full data for LLM
         st.session_state.prompt_csv_path = None
+    # NEW: Cache key for setup to force re-execution of cached setup function
+    if 'setup_cache_key' not in st.session_state:
+        st.session_state.setup_cache_key = 0
     
     # LLM specific states
     if 'llm_chat_history' not in st.session_state:
@@ -502,16 +507,21 @@ def main():
     """, unsafe_allow_html=True)
 
     # --- Setup Logic ---
-    # The rest of your main function logic can remain largely the same from here
     if not st.session_state.initial_setup_completed and not st.session_state.setup_failed:
         if st.button("Start Setup"):
-            initial_setup_cached()
+            # Increment cache key to force re-execution of initial_setup_cached
+            st.session_state.setup_cache_key += 1 
+            # MODIFIED: Pass the cache_key_for_setup argument
+            initial_setup_cached(st.session_state.setup_cache_key)
             st.rerun()
 
     elif st.session_state.setup_failed:
         st.warning("Setup failed. Please try again.")
         if st.button("Start Setup"):
-            initial_setup_cached()
+            # Increment cache key to force re-execution of initial_setup_cached
+            st.session_state.setup_cache_key += 1
+            # MODIFIED: Pass the cache_key_for_setup argument
+            initial_setup_cached(st.session_state.setup_cache_key)
             st.rerun()
 
     if st.session_state.initial_setup_completed and not st.session_state.proceed_clicked:
@@ -578,20 +588,23 @@ def main():
                         st.success(f":file_folder: '{pcap_filename_for_analysis}' size {mb_size:.2f} MB selected. Starting analysis...")
                         st.session_state.file_selected_successfully = True
                         
-                        model = st.session_state.model_state
-                        if model:
-                            # Modified: run_prediction_pipeline now returns prompt_file_path
-                            results_df, total_p, prompt_csv_path = run_prediction_pipeline(target_pcap_path, pcap_filename_for_analysis, model)
-                            st.session_state.prediction_results_df = results_df
-                            st.session_state.total_packets = total_p
-                            st.session_state.prompt_csv_path = prompt_csv_path # Store the path
-                            st.session_state.show_results = True
-                            st.rerun()
-                        else:
-                            st.error("ML model not loaded. Please ensure setup completed successfully.")
+                        # Crucially, ensure the model is loaded before proceeding
+                        if 'model_state' not in st.session_state or st.session_state.model_state is None:
+                            st.error("ML model is not loaded. Please ensure setup completed successfully.")
                             st.session_state.file_selected_successfully = False
                             st.session_state.show_results = False
                             clear_uploaded_files()
+                            st.stop() # Stop further execution
+
+                        model = st.session_state.model_state
+                        
+                        # Modified: run_prediction_pipeline now returns prompt_file_path
+                        results_df, total_p, prompt_csv_path = run_prediction_pipeline(target_pcap_path, pcap_filename_for_analysis, model)
+                        st.session_state.prediction_results_df = results_df
+                        st.session_state.total_packets = total_p
+                        st.session_state.prompt_csv_path = prompt_csv_path # Store the path
+                        st.session_state.show_results = True
+                        st.rerun()
 
                     except Exception as e:
                         st.error(f"Error during file processing or analysis: {e}")
@@ -715,7 +728,6 @@ def main():
                             with st.spinner(f"Generating initial analysis for Packet {selected_packet_index}..."):
                                 initial_prompt_text = create_gemini_prompt_for_streamlit(selected_flow_row)
                                 try:
-                                    # Use the gemini_model object from main's scope
                                     response = gemini_model.generate_content(initial_prompt_text)
                                     st.session_state.llm_chat_history[selected_packet_index].append({"role": "user", "content": initial_prompt_text})
                                     st.session_state.llm_chat_history[selected_packet_index].append({"role": "model", "content": response.text})
@@ -777,13 +789,23 @@ def main():
             st.markdown("---")
             if st.button("Analyze another file", key="analyze_another_file_button"):
                 clear_uploaded_files()
-                # Clear all relevant session states for a fresh start
+                # Clear relevant session states to reset the app flow
                 for key in list(st.session_state.keys()):
-                    if key.startswith(('show_', 'file_selected', 'selected_filename', 
+                    # Only clear dynamically created states or specific ones for a full reset
+                    if key.startswith(('show_', 'file_selected', 'selected_filename',
                                        'prediction_results_df', 'total_packets', 'prompt_csv_path',
-                                       'llm_')): # Clear LLM related states too
-                        del st.session_state[key]
-                st.session_state.proceed_clicked = True # Keep this true if we want to immediately go to file selection
+                                       'llm_')):
+                        if key in st.session_state:
+                            del st.session_state[key]
+
+                # IMPORTANT: Reset these flags to force the app back to the initial setup flow
+                st.session_state.initial_setup_completed = False
+                st.session_state.proceed_clicked = False
+                st.session_state.show_setup_logs = False # Ensure logs are hidden initially
+
+                # NEW: Increment cache key to force re-execution of initial_setup_cached
+                st.session_state.setup_cache_key += 1
+
                 st.rerun()
 
 
