@@ -136,13 +136,15 @@ def display_setup_logs():
                     for chunk in response.iter_content(chunk_size=8192):
                         f.write(chunk)
                 st.write(":white_check_mark: ML Model downloaded.")
-                
+            
+            '''
             # import model as using joblib
             st.write(":robot_face: Loading ML model...")
             model = joblib.load('RandomForest400IntPortCIC1718-2.pkl')
             # The model is loaded here and directly assigned to session state
             st.session_state.model_state = model
             st.write(":white_check_mark: ML Model loaded successfully.")
+            '''
 
             status.update(label=":white_check_mark: ML Model Setup Complete", state="complete", expanded=False)
             return True # Indicate success
@@ -203,11 +205,9 @@ def run_prediction_pipeline(pcap_file_path, uploaded_pcap_name): # Removed 'mode
         if not os.path.exists(model_path):
             st.error(f"ML model file not found at {model_path}. Please ensure setup completed successfully.")
             return None, 0, None # Indicate failure if file isn't there
-        '''
         st.status(":robot_face: Loading ML model...", state="running") # Optional status update
         model = joblib.load(model_path)
         st.status(":white_check_mark: ML Model loaded successfully.")
-        '''
     except Exception as e:
         st.error(f"Error loading ML model: {e}. Cannot run prediction.")
         return None, 0, None # Indicate failure
