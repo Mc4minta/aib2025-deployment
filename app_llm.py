@@ -126,8 +126,17 @@ def display_setup_logs():
     # Classification Model setup
     with st.status("Setting up ML Model...",expanded=True, state="running") as status:
         try:
-            # ... (downloading model from hugging face if not exist - unchanged) ...
-
+            # downloading model from hugging face if not exist
+            if not os.path.exists("RandomForest400IntPortCIC1718-2.pkl"):
+                st.write(":hugging_face: Downloading ML model...")
+                model_url = "https://huggingface.co/Mc4minta/RandomForest400IntPortCIC1718/resolve/main/RandomForest400IntPortCIC1718-2.pkl"
+                response = requests.get(model_url, stream=True)
+                response.raise_for_status()
+                with open("RandomForest400IntPortCIC1718-2.pkl", "wb") as f:
+                    for chunk in response.iter_content(chunk_size=8192):
+                        f.write(chunk)
+                st.write(":white_check_mark: ML Model downloaded.")
+                
             # import model as using joblib
             st.write(":robot_face: Loading ML model...")
             model = joblib.load('RandomForest400IntPortCIC1718-2.pkl')
@@ -184,15 +193,29 @@ def clear_uploaded_files():
                     os.remove(filepath)
             except Exception as e:
                 st.error(f"Failed to delete {filename} from data/out: {e}")
-    
-    if 'model_state' in st.session_state:
-        del st.session_state.model_state
 
-# --- Prediction Pipeline (UNCHANGED) ---
-def run_prediction_pipeline(pcap_file_path, uploaded_pcap_name, model):
+# --- Prediction Pipeline (YOUR APPROACH) ---
+def run_prediction_pipeline(pcap_file_path, uploaded_pcap_name): # Removed 'model' parameter
+    # Load the ML model *here*, just before it's used for prediction
+    model_path = 'RandomForest400IntPortCIC1718-2.pkl'
+    model = None # Initialize model to None
+    try:
+        if not os.path.exists(model_path):
+            st.error(f"ML model file not found at {model_path}. Please ensure setup completed successfully.")
+            return None, 0, None # Indicate failure if file isn't there
+        '''
+        st.status(":robot_face: Loading ML model...", state="running") # Optional status update
+        model = joblib.load(model_path)
+        st.status(":white_check_mark: ML Model loaded successfully.")
+        '''
+    except Exception as e:
+        st.error(f"Error loading ML model: {e}. Cannot run prediction.")
+        return None, 0, None # Indicate failure
+
+    # --- Rest of your run_prediction_pipeline function ---
     data_in_dir = 'data/in/'
     data_out_dir = 'data/out/'
-    
+
     file_name_without_ext = os.path.splitext(uploaded_pcap_name)[0]
     index_file_path = f'{data_out_dir}{file_name_without_ext}_index.csv'
     flow_file_path = f'{data_out_dir}{file_name_without_ext}_ISCX.csv'
@@ -202,7 +225,7 @@ def run_prediction_pipeline(pcap_file_path, uploaded_pcap_name, model):
     try:
         with st.status("Running analysis pipeline...", expanded=True) as pipeline_status:
             pipeline_status.write(":mag: Starting analysis...")
-            
+
             # Step 1: Run CICFlowMeter to generate flow features
             pipeline_status.write(":rocket: Running CICFlowMeter to generate flow features...")
             subprocess.run("CICFlowMeter-3.0/tcpdump_and_cicflowmeter/bin/CICFlowMeter", check=True, capture_output=True, text=True)
@@ -210,6 +233,7 @@ def run_prediction_pipeline(pcap_file_path, uploaded_pcap_name, model):
 
             # Step 2: Simulate flow with packet indices
             pipeline_status.write(":chart_with_upwards_trend: Extracting flows and simulating packet indices...")
+            # Assuming extract_flows_from_pcap is defined elsewhere
             simulated_flows_df, total_packets = extract_flows_from_pcap(pcap_file_path)
             simulated_flows_df['Total_Packets'] = total_packets
             simulated_flows_df.to_csv(index_file_path, index=False)
@@ -217,9 +241,10 @@ def run_prediction_pipeline(pcap_file_path, uploaded_pcap_name, model):
 
             # Step 3: Merge packet indices flow with original flow
             pipeline_status.write(":handshake: Merging simulated and original flow data...")
+            # Assuming read_flows_to_dataframe and merge_flows_and_return_dataframe are defined elsewhere
             simulated_df, _ = read_flows_to_dataframe(index_file_path, is_simulated_output=True)
             original_df, _ = read_flows_to_dataframe(flow_file_path, is_simulated_output=False)
-            
+
             merged_df = merge_flows_and_return_dataframe(simulated_df, original_df)
             merged_df['Total_Packets'] = total_packets
             merged_df.to_csv(index_file_path, index=False)
@@ -240,9 +265,12 @@ def run_prediction_pipeline(pcap_file_path, uploaded_pcap_name, model):
 
             # 2. Preprocess Data for Model Prediction
             pipeline_status.write(":gear: Preprocessing data for prediction...")
+            # Assuming preprocess_dataframe is defined elsewhere
             df = preprocess_dataframe(merged_df.copy())
-            total_packets = df['Total_Packets'].iloc[0]
-            df = df.drop(columns=['Total_Packets'])
+            total_packets = df['Total_Packets'].iloc[0] if 'Total_Packets' in df.columns and not df.empty else 0
+            if 'Total_Packets' in df.columns:
+                df = df.drop(columns=['Total_Packets'])
+
             original_flow_indices = df.index
 
             if 'Simulated_Packet_Indices' in df.columns:
@@ -253,8 +281,7 @@ def run_prediction_pipeline(pcap_file_path, uploaded_pcap_name, model):
 
             # 3. Perform Prediction (per-flow prediction)
             pipeline_status.write(":robot_face: Performing flow-level predictions...")
-            model.predict(df_for_prediction) # Ensure 'model' is actually used
-            flow_predictions = model.predict(df_for_prediction)
+            flow_predictions = model.predict(df_for_prediction) # Uses the 'model' loaded above
             pipeline_status.write(":white_check_mark: Predictions complete.")
 
             # 4. Link Predictions with Flow Metadata
@@ -268,6 +295,7 @@ def run_prediction_pipeline(pcap_file_path, uploaded_pcap_name, model):
 
             # 6. Group by Packet Indices and Aggregate Features
             pipeline_status.write(":clipboard: Aggregating features by packet index...")
+            # Assuming choose_label is defined elsewhere
             final_df_prediction = df_prediction_expanded.groupby('Packet_Indices').agg(
                 Label=('Label', lambda x: choose_label(list(x))),
                 Source_IP=('Src IP', 'first'),
@@ -371,7 +399,7 @@ def run_prediction_pipeline(pcap_file_path, uploaded_pcap_name, model):
             final_df_prediction.reset_index(drop=True, inplace=True)
 
             final_df_prediction.to_csv(prompt_file_path, index=False) # This is the file with all details for LLM
-            
+
             columns_to_keep_for_display = [
                 'Packet_Indices',
                 'Label',
@@ -593,17 +621,15 @@ def main():
                         st.success(f":file_folder: '{pcap_filename_for_analysis}' size {mb_size:.2f} MB selected. Starting analysis...")
                         st.session_state.file_selected_successfully = True
                         
-                        model = st.session_state.model_state
-                        if model:
-                            # Modified: run_prediction_pipeline now returns prompt_file_path
-                            results_df, total_p, prompt_csv_path = run_prediction_pipeline(target_pcap_path, pcap_filename_for_analysis, model)
+                        results_df, total_p, prompt_csv_path = run_prediction_pipeline(target_pcap_path, pcap_filename_for_analysis)
+                        if results_df is not None:
                             st.session_state.prediction_results_df = results_df
                             st.session_state.total_packets = total_p
-                            st.session_state.prompt_csv_path = prompt_csv_path # Store the path
+                            st.session_state.prompt_csv_path = prompt_csv_path
                             st.session_state.show_results = True
                             st.rerun()
                         else:
-                            st.error("ML model not loaded. Please ensure setup completed successfully.")
+                            st.error("Analysis failed. Please check the logs above.")
                             st.session_state.file_selected_successfully = False
                             st.session_state.show_results = False
                             clear_uploaded_files()
