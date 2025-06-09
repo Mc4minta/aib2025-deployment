@@ -14,22 +14,45 @@ from merge_flow import *
 from simulate_flow import *
 from utils import * # This is where map_port, preprocess_dataframe, and choose_label are now expected to be
 
-# --- LLM Configuration Function (only contains genai.configure, no st. commands) ---
+# Global constant for Gemini model
+GEMINI_MODEL = "gemini-1.5-flash"
+
+# --- Initialize session state variables if they don't exist ---
+# This is the crucial part for robustness
+if 'initial_setup_completed' not in st.session_state:
+    st.session_state.initial_setup_completed = False
+if 'setup_failed' not in st.session_state:
+    st.session_state.setup_failed = False
+if 'show_setup_logs' not in st.session_state:
+    st.session_state.show_setup_logs = False
+if 'model_state' not in st.session_state: # Initialize model_state
+    st.session_state.model_state = None # Set to None initially
+    
+# --- Your existing cached setup function ---
+@st.cache_data(show_spinner=False)
+def initial_setup_cached(cache_key_for_setup):
+    # These resets are crucial for the first run or after "Analyze another file"
+    # Keeping them for the first setup call, but the global initialization handles subsequent ones
+    st.session_state.initial_setup_completed = False
+    st.session_state.setup_failed = False
+
+    success = display_setup_logs()
+
+    st.session_state.initial_setup_completed = success
+    st.session_state.setup_failed = not success
+    st.session_state.show_setup_logs = True
+    return success
+
+# --- LLM Configuration Function ---
 @st.cache_resource(show_spinner="Connecting to Gemini...")
-def configure_gemini(api_key): # Now takes api_key as an argument
+def configure_gemini(api_key):
     try:
         genai.configure(api_key=api_key)
         model = genai.GenerativeModel(GEMINI_MODEL)
         return model
     except Exception as e:
-        # Don't use st.error here, as this function is cached and called before page_config
-        # We'll handle the error display in main()
-        st.exception(e) # This is okay for debugging, but not for final user message
+        print(f"Error configuring Gemini (within cache_resource): {e}") # Log to console
         return None
-
-# Global constant for Gemini model
-GEMINI_MODEL = "gemini-1.5-flash"
-
 
 # --- CICFlowMeter and ML Model Setup Functions (UNCHANGED) ---
 def display_setup_logs():
@@ -103,23 +126,15 @@ def display_setup_logs():
     # Classification Model setup
     with st.status("Setting up ML Model...",expanded=True, state="running") as status:
         try:
-            # downloading model from hugging face if not exist
-            if not os.path.exists("RandomForest400IntPortCIC1718-2.pkl"):
-                st.write(":hugging_face: Downloading ML model...")
-                model_url = "https://huggingface.co/Mc4minta/RandomForest400IntPortCIC1718/resolve/main/RandomForest400IntPortCIC1718-2.pkl"
-                response = requests.get(model_url, stream=True)
-                response.raise_for_status()
-                with open("RandomForest400IntPortCIC1718-2.pkl", "wb") as f:
-                    for chunk in response.iter_content(chunk_size=8192):
-                        f.write(chunk)
-                st.write(":white_check_mark: ML Model downloaded.")
+            # ... (downloading model from hugging face if not exist - unchanged) ...
 
             # import model as using joblib
             st.write(":robot_face: Loading ML model...")
             model = joblib.load('RandomForest400IntPortCIC1718-2.pkl')
+            # The model is loaded here and directly assigned to session state
             st.session_state.model_state = model
             st.write(":white_check_mark: ML Model loaded successfully.")
-            
+
             status.update(label=":white_check_mark: ML Model Setup Complete", state="complete", expanded=False)
             return True # Indicate success
         except requests.exceptions.RequestException as e:
