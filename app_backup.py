@@ -7,31 +7,32 @@ import joblib
 import os
 import shutil
 import google.generativeai as genai
-import sys # Import sys for potential exit if truly needed (though st.stop() is preferred in Streamlit)
+import sys
 
-# Assuming these are in your project directory (or adjust paths if they are elsewhere)
-from merge_flow import *
-from simulate_flow import *
-from utils import * # This is where map_port, preprocess_dataframe, and choose_label are now expected to be
+# Importing helper functions from separate modules
+# Ensure these files (merge_flow.py, simulate_flow.py, utils.py) are in the same directory
+# as this app_llm.py script.
+from merge_flow import read_flows_to_dataframe, merge_flows_and_return_dataframe
+from simulate_flow import extract_flows_from_pcap
+from utils import map_port, preprocess_dataframe, choose_label
 
-# --- LLM Configuration Function (only contains genai.configure, no st. commands) ---
+
+# --- LLM Configuration Function ---
 @st.cache_resource(show_spinner="Connecting to Gemini...")
-def configure_gemini(api_key): # Now takes api_key as an argument
+def configure_gemini(api_key):
     try:
         genai.configure(api_key=api_key)
         model = genai.GenerativeModel(GEMINI_MODEL)
         return model
     except Exception as e:
-        # Don't use st.error here, as this function is cached and called before page_config
-        # We'll handle the error display in main()
-        st.exception(e) # This is okay for debugging, but not for final user message
+        print(f"Error configuring Gemini (within cache_resource): {e}") # Log to console
         return None
 
 # Global constant for Gemini model
 GEMINI_MODEL = "gemini-1.5-flash"
 
 
-# --- CICFlowMeter and ML Model Setup Functions (UNCHANGED) ---
+# --- CICFlowMeter and ML Model Setup Functions ---
 def display_setup_logs():
     # CICFlowMeter setup
     with st.status("Setting up CICFlowMeter-3.0...",expanded=True, state="running") as status:
@@ -135,11 +136,10 @@ def display_setup_logs():
             st.session_state.initial_setup_completed = False
             return False
 
+# MODIFIED: Added cache_key_for_setup argument
 @st.cache_data(show_spinner=False)
-def initial_setup_cached():
-    if st.session_state.get('initial_setup_completed', False) and not st.session_state.get('setup_failed', False):
-        return True
-    
+def initial_setup_cached(cache_key_for_setup):
+    # These resets are crucial for the first run or after "Analyze another file"
     st.session_state.initial_setup_completed = False
     st.session_state.setup_failed = False
     
@@ -147,7 +147,7 @@ def initial_setup_cached():
     
     st.session_state.initial_setup_completed = success
     st.session_state.setup_failed = not success
-    st.session_state.show_setup_logs = True
+    st.session_state.show_setup_logs = True # Ensure logs are displayed if setup was just run
     return success
 
 def clear_uploaded_files():
@@ -170,10 +170,11 @@ def clear_uploaded_files():
             except Exception as e:
                 st.error(f"Failed to delete {filename} from data/out: {e}")
     
+    # Safely delete model_state if it exists
     if 'model_state' in st.session_state:
         del st.session_state.model_state
 
-# --- Prediction Pipeline (UNCHANGED) ---
+# --- Prediction Pipeline ---
 def run_prediction_pipeline(pcap_file_path, uploaded_pcap_name, model):
     data_in_dir = 'data/in/'
     data_out_dir = 'data/out/'
@@ -226,8 +227,10 @@ def run_prediction_pipeline(pcap_file_path, uploaded_pcap_name, model):
             # 2. Preprocess Data for Model Prediction
             pipeline_status.write(":gear: Preprocessing data for prediction...")
             df = preprocess_dataframe(merged_df.copy())
-            total_packets = df['Total_Packets'].iloc[0]
-            df = df.drop(columns=['Total_Packets'])
+            total_packets = df['Total_Packets'].iloc[0] if 'Total_Packets' in df.columns and not df.empty else 0 # Ensure total_packets is correctly retrieved
+            if 'Total_Packets' in df.columns:
+                df = df.drop(columns=['Total_Packets'])
+            
             original_flow_indices = df.index
 
             if 'Simulated_Packet_Indices' in df.columns:
@@ -238,7 +241,6 @@ def run_prediction_pipeline(pcap_file_path, uploaded_pcap_name, model):
 
             # 3. Perform Prediction (per-flow prediction)
             pipeline_status.write(":robot_face: Performing flow-level predictions...")
-            model.predict(df_for_prediction) # Ensure 'model' is actually used
             flow_predictions = model.predict(df_for_prediction)
             pipeline_status.write(":white_check_mark: Predictions complete.")
 
@@ -422,32 +424,13 @@ Given these details, please explain:
 
 # --- Streamlit Main Function ---
 def main():
-    # 1. Set page config FIRST
+    # 1. Set page config FIRST. This must be the very first Streamlit command.
     st.set_page_config(
         page_title="Malicious .PCAP File Classifier",
         page_icon=":peacock:",
         layout="centered",
         initial_sidebar_state="expanded",
     )
-
-    # 2. Then perform API key check and Gemini model initialization
-    # It's better to fetch the API key here
-    api_key = os.environ.get("GOOGLE_API_KEY")
-    if not api_key:
-        st.error("🚨 GOOGLE_API_KEY environment variable not set.")
-        st.warning("Please set it before running the app. E.g.:")
-        st.code("export GOOGLE_API_KEY='YOUR_API_KEY'  # For Linux terminal")
-        st.code("os.environ['GOOGLE_API_KEY'] = 'YOUR_API_KEY' # For Google Colab cell")
-        st.info("The application cannot proceed without the API key.")
-        st.stop() # Halt execution if API key is missing
-
-    # Initialize Gemini model (this will be called once per session due to st.cache_resource)
-    # Pass the fetched api_key
-    gemini_model = configure_gemini(api_key) 
-    if gemini_model is None:
-        # configure_gemini already displayed error, so just stop
-        st.info("Gemini model could not be initialized. Please check your API key and connection.")
-        st.stop() # Halt execution if Gemini model couldn't be configured
 
     # Initialize session states (these can be after set_page_config)
     if 'initial_setup_completed' not in st.session_state:
@@ -468,22 +451,25 @@ def main():
         st.session_state.prediction_results_df = None
     if 'total_packets' not in st.session_state:
         st.session_state.total_packets = 0
-    if 'prompt_csv_path' not in st.session_state: # New: Store path to the full data for LLM
+    if 'prompt_csv_path' not in st.session_state:
         st.session_state.prompt_csv_path = None
-    
+    if 'setup_cache_key' not in st.session_state:
+        st.session_state.setup_cache_key = 0
+
     # LLM specific states
     if 'llm_chat_history' not in st.session_state:
-        st.session_state.llm_chat_history = {} # Stores chat history per Packet_Indices
+        st.session_state.llm_chat_history = {}
     if 'current_llm_flow_index' not in st.session_state:
         st.session_state.current_llm_flow_index = None
     if 'show_llm_chat' not in st.session_state:
         st.session_state.show_llm_chat = False
-
+    if 'gemini_model_initialized' not in st.session_state: # New flag
+        st.session_state.gemini_model_initialized = False
 
     st.markdown("""
         <h1 style='text-align: center; color: #b5213b;'>
             AI Builders 2025
-        </h1> 
+        </h1>
         <h1 style='text-align: center;'>
             Malicious <span style='color: #074ec0;'>.pcap</span> File Classifier
         </h1>
@@ -502,16 +488,17 @@ def main():
     """, unsafe_allow_html=True)
 
     # --- Setup Logic ---
-    # The rest of your main function logic can remain largely the same from here
     if not st.session_state.initial_setup_completed and not st.session_state.setup_failed:
         if st.button("Start Setup"):
-            initial_setup_cached()
+            st.session_state.setup_cache_key += 1
+            initial_setup_cached(st.session_state.setup_cache_key)
             st.rerun()
 
     elif st.session_state.setup_failed:
         st.warning("Setup failed. Please try again.")
         if st.button("Start Setup"):
-            initial_setup_cached()
+            st.session_state.setup_cache_key += 1
+            initial_setup_cached(st.session_state.setup_cache_key)
             st.rerun()
 
     if st.session_state.initial_setup_completed and not st.session_state.proceed_clicked:
@@ -523,6 +510,28 @@ def main():
 
     # --- Main Application Logic (after setup and proceed) ---
     if st.session_state.initial_setup_completed and st.session_state.proceed_clicked:
+        # Moved API key check and Gemini model initialization here
+        if not st.session_state.gemini_model_initialized:
+            api_key = os.environ.get("GOOGLE_API_KEY")
+            if not api_key:
+                st.error("🚨 GOOGLE_API_KEY environment variable not set.")
+                st.warning("Please set it before running the app. E.g.:")
+                st.code("export GOOGLE_API_KEY='YOUR_API_KEY'  # For Linux terminal")
+                st.code("os.environ['GOOGLE_API_KEY'] = 'YOUR_API_KEY' # For Google Colab cell")
+                st.info("The application cannot proceed without the API key.")
+                st.stop()
+
+            # Initialize Gemini model (this will be called once per session due to st.cache_resource)
+            gemini_model = configure_gemini(api_key)
+            if gemini_model is None:
+                st.error("Gemini model could not be initialized. Please check your API key and network connection.")
+                st.stop()
+            st.session_state.gemini_model_initialized = True # Set flag once initialized
+            st.session_state.gemini_model = gemini_model # Store the model instance in session state
+
+        # Now you can use st.session_state.gemini_model where needed
+        gemini_model = st.session_state.gemini_model
+
         if not st.session_state.show_results:
             st.info(":file_folder: Choose a file for analysis.")
 
@@ -533,8 +542,8 @@ def main():
                 key="selection_method"
             )
 
-            pcap_to_analyze_bytes = None # Renamed to clearly indicate bytes data
-            pcap_filename_for_analysis = None # Renamed to clearly indicate filename for the pipeline
+            pcap_to_analyze_bytes = None
+            pcap_filename_for_analysis = None
 
             if selection_method == "Upload a PCAP file":
                 uploaded_file = st.file_uploader(
@@ -567,31 +576,31 @@ def main():
             # --- Analysis Button ---
             if pcap_to_analyze_bytes is not None and pcap_filename_for_analysis is not None:
                 if st.button("Start Analysis", key="start_analysis_button"):
-                    # Save the chosen PCAP (uploaded or sample) to data/in
                     os.makedirs('data/in', exist_ok=True)
                     target_pcap_path = os.path.join("data/in", pcap_filename_for_analysis)
                     try:
                         with open(target_pcap_path, "wb") as f:
-                            f.write(pcap_to_analyze_bytes) # Use the bytes data here
+                            f.write(pcap_to_analyze_bytes)
                         mb_size = len(pcap_to_analyze_bytes) / (1024 * 1024)
                         st.session_state.selected_filename = pcap_filename_for_analysis
                         st.success(f":file_folder: '{pcap_filename_for_analysis}' size {mb_size:.2f} MB selected. Starting analysis...")
                         st.session_state.file_selected_successfully = True
-                        
-                        model = st.session_state.model_state
-                        if model:
-                            # Modified: run_prediction_pipeline now returns prompt_file_path
-                            results_df, total_p, prompt_csv_path = run_prediction_pipeline(target_pcap_path, pcap_filename_for_analysis, model)
-                            st.session_state.prediction_results_df = results_df
-                            st.session_state.total_packets = total_p
-                            st.session_state.prompt_csv_path = prompt_csv_path # Store the path
-                            st.session_state.show_results = True
-                            st.rerun()
-                        else:
-                            st.error("ML model not loaded. Please ensure setup completed successfully.")
+
+                        if 'model_state' not in st.session_state or st.session_state.model_state is None:
+                            st.error("ML model is not loaded. Please ensure setup completed successfully.")
                             st.session_state.file_selected_successfully = False
                             st.session_state.show_results = False
                             clear_uploaded_files()
+                            st.stop()
+
+                        model = st.session_state.model_state
+
+                        results_df, total_p, prompt_csv_path = run_prediction_pipeline(target_pcap_path, pcap_filename_for_analysis, model)
+                        st.session_state.prediction_results_df = results_df
+                        st.session_state.total_packets = total_p
+                        st.session_state.prompt_csv_path = prompt_csv_path
+                        st.session_state.show_results = True
+                        st.rerun()
 
                     except Exception as e:
                         st.error(f"Error during file processing or analysis: {e}")
@@ -605,9 +614,9 @@ def main():
             total_packets = st.session_state.total_packets
             st.subheader(f"Analysis Results for '{selected_filename}'")
             st.info(f"Total packets analyzed: **{total_packets}**")
-            
+
             prediction_df = st.session_state.prediction_results_df
-            
+
             if "show_df" not in st.session_state:
                 st.session_state.show_df = False
             if "show_predictions" not in st.session_state:
@@ -619,12 +628,12 @@ def main():
                 if st.button("Show Packet-Level Details"):
                     st.session_state.show_df = True
                     st.session_state.show_predictions = False
-                    st.session_state.show_llm_chat = False # Hide LLM when showing details
+                    st.session_state.show_llm_chat = False
             with col2:
                 if st.button("Show Prediction Summary"):
                     st.session_state.show_df = False
                     st.session_state.show_predictions = True
-                    st.session_state.show_llm_chat = False # Hide LLM when showing summary
+                    st.session_state.show_llm_chat = False
 
             if st.session_state.show_predictions:
                 st.write("### Prediction Summary (Packet Count by Label)")
@@ -634,7 +643,7 @@ def main():
                     st.dataframe(prediction_counts.reset_index().rename(columns={'index': 'Label', 'Label': 'Count'}), use_container_width=True)
                 else:
                     st.warning("No predictions to display.")
-            
+
             if st.session_state.show_df:
                 st.write("### Packet-Level Prediction Details")
                 st.dataframe(prediction_df, use_container_width=True)
@@ -649,7 +658,7 @@ def main():
                         mime="text/csv",
                         help="Download the CSV file containing packet-level predictions."
                     )
-            
+
             st.markdown("---")
             st.subheader("🤖 LLM-Powered Flow Analysis")
 
@@ -676,70 +685,73 @@ def main():
                 filtered_llm_flows = st.session_state.full_prompt_df.copy()
                 if "All" not in label_filter:
                     filtered_llm_flows = filtered_llm_flows[filtered_llm_flows['Label'].isin(label_filter)]
-                
+
                 # Exclude Benign from default selection if not explicitly chosen
+                # This logic might need adjustment if you always want to include benign
+                # but the current code implies excluding if "All" is not selected.
+                # If "All" is selected, the line above `filtered_llm_flows_options = filtered_llm_flows` handles it.
+                # If you want to always show non-benign by default in the selectbox,
+                # even if "All" is selected in the multiselect, you might need different filtering here.
+                # For now, keeping your original intent, but it's a point of consideration.
                 if "All" in label_filter:
                     filtered_llm_flows_options = filtered_llm_flows
                 else:
                     filtered_llm_flows_options = filtered_llm_flows[filtered_llm_flows['Label'] != 'Benign']
 
-                # Display a dropdown for Packet_Indices of non-benign flows
+
                 if not filtered_llm_flows_options.empty:
-                    # Create options with more descriptive labels
                     llm_flow_options = [
                         f"Packet {row['Packet_Indices']} (Label: {row['Label']}, Src: {row['Source_IP']}, Dst: {row['Destination_IP']}:{row['Destination_Port']})"
                         for index, row in filtered_llm_flows_options.sort_values(by='Packet_Indices').iterrows()
                     ]
-                    
+
                     selected_flow_option = st.selectbox(
                         "Select a flow to get LLM insights:",
                         options=["-- Select a flow --"] + llm_flow_options,
                         key="llm_flow_selection"
                     )
 
-                    # Extract Packet_Indices from the selected option
                     selected_packet_index = None
                     if selected_flow_option != "-- Select a flow --":
                         selected_packet_index = int(selected_flow_option.split(" (Label:")[0].replace("Packet ", ""))
-                        
+
                     if selected_packet_index:
-                        # Get the row corresponding to the selected packet index
                         selected_flow_row = st.session_state.full_prompt_df[
                             st.session_state.full_prompt_df['Packet_Indices'] == selected_packet_index
                         ].iloc[0]
 
-                        # Ensure the chat history for this flow is initialized
-                        if selected_packet_index not in st.session_state.llm_chat_history:
-                            st.session_state.llm_chat_history[selected_packet_index] = []
-                            # Automatically generate initial explanation if not already done
+                        # Check if chat history for this specific flow is empty to generate initial response
+                        if selected_packet_index not in st.session_state.llm_chat_history or not st.session_state.llm_chat_history[selected_packet_index]:
                             with st.spinner(f"Generating initial analysis for Packet {selected_packet_index}..."):
                                 initial_prompt_text = create_gemini_prompt_for_streamlit(selected_flow_row)
                                 try:
-                                    # Use the gemini_model object from main's scope
-                                    response = gemini_model.generate_content(initial_prompt_text)
-                                    st.session_state.llm_chat_history[selected_packet_index].append({"role": "user", "content": initial_prompt_text})
+                                    # Ensure gemini_model is available here
+                                    if 'gemini_model' not in st.session_state or st.session_state.gemini_model is None:
+                                        st.error("Gemini model not initialized for chat. Please refresh or re-run setup.")
+                                        st.stop()
+                                    
+                                    response = st.session_state.gemini_model.generate_content(initial_prompt_text)
+                                    st.session_state.llm_chat_history.setdefault(selected_packet_index, []).append({"role": "user", "content": initial_prompt_text})
                                     st.session_state.llm_chat_history[selected_packet_index].append({"role": "model", "content": response.text})
                                     st.session_state.current_llm_flow_index = selected_packet_index
                                     st.session_state.show_llm_chat = True
-                                    # Rerun to show the initial chat immediately
-                                    st.rerun() 
+                                    st.rerun()
                                 except Exception as e:
                                     st.error(f"Error generating initial LLM response: {e}")
                                     st.session_state.show_llm_chat = False
-                        
-                        st.session_state.current_llm_flow_index = selected_packet_index
-                        st.session_state.show_llm_chat = True
+                        else: # If history exists, just set current_llm_flow_index and show chat
+                            st.session_state.current_llm_flow_index = selected_packet_index
+                            st.session_state.show_llm_chat = True
+
 
                         if st.session_state.show_llm_chat and st.session_state.current_llm_flow_index == selected_packet_index:
                             st.write(f"### Chat for Packet {selected_packet_index} ({selected_flow_row['Label']} traffic)")
-                            
-                            # Display chat messages from history
+
                             for message in st.session_state.llm_chat_history[selected_packet_index]:
                                 with st.chat_message(message["role"]):
                                     st.markdown(message["content"])
 
-                            # Chat input for follow-up questions
-                            prompt_chat_input = st.chat_input("Ask a follow-up question about this flow:")
+                            prompt_chat_input = st.chat_input("Ask a follow-up question about this flow:", key=f"chat_input_{selected_packet_index}") # Unique key
                             if prompt_chat_input:
                                 st.session_state.llm_chat_history[selected_packet_index].append({"role": "user", "content": prompt_chat_input})
                                 with st.chat_message("user"):
@@ -753,20 +765,26 @@ def main():
                                                 {"role": "user", "parts": [msg["content"]]} if msg["role"] == "user" else {"role": "model", "parts": [msg["content"]]}
                                                 for msg in st.session_state.llm_chat_history[selected_packet_index] if msg["role"] in ["user", "model"]
                                             ]
-                                            
+
                                             # Start a new chat with the current history
-                                            chat_session = gemini_model.start_chat(history=current_chat_history[:-1]) # Exclude the latest user message from history for send_message
-                                            
+                                            # Ensure gemini_model is available
+                                            if 'gemini_model' not in st.session_state or st.session_state.gemini_model is None:
+                                                st.error("Gemini model not initialized for chat. Cannot send message.")
+                                                # Add a placeholder error message to history to avoid breaking the UI
+                                                st.session_state.llm_chat_history[selected_packet_index].append({"role": "model", "content": "Error: Gemini model not available."})
+                                                st.rerun()
+
+                                            chat_session = st.session_state.gemini_model.start_chat(history=current_chat_history[:-1])
                                             full_response = chat_session.send_message(prompt_chat_input)
                                             st.markdown(full_response.text)
                                             st.session_state.llm_chat_history[selected_packet_index].append({"role": "model", "content": full_response.text})
-                                            
+
                                         except Exception as e:
                                             st.error(f"Error communicating with LLM: {e}")
-                                            st.session_state.llm_chat_history[selected_packet_index].append({"role": "model", "content": f"Error: {e}"}) # Add error to history
-                                st.rerun() # Rerun to display new message
+                                            st.session_state.llm_chat_history[selected_packet_index].append({"role": "model", "content": f"Error: {e}"})
+                                        st.rerun()
                     else:
-                        st.session_state.show_llm_chat = False # Hide chat if no flow is selected
+                        st.session_state.show_llm_chat = False
                         st.session_state.current_llm_flow_index = None
                 else:
                     st.info("No flows matching the selected labels to analyze with LLM.")
@@ -777,13 +795,17 @@ def main():
             st.markdown("---")
             if st.button("Analyze another file", key="analyze_another_file_button"):
                 clear_uploaded_files()
-                # Clear all relevant session states for a fresh start
                 for key in list(st.session_state.keys()):
-                    if key.startswith(('show_', 'file_selected', 'selected_filename', 
-                                       'prediction_results_df', 'total_packets', 'prompt_csv_path',
-                                       'llm_')): # Clear LLM related states too
-                        del st.session_state[key]
-                st.session_state.proceed_clicked = True # Keep this true if we want to immediately go to file selection
+                    if key.startswith(('show_', 'file_selected', 'selected_filename',
+                                     'prediction_results_df', 'total_packets', 'prompt_csv_path',
+                                     'llm_', 'full_prompt_df')): # Added full_prompt_df to clear
+                        if key in st.session_state:
+                            del st.session_state[key]
+
+                st.session_state.initial_setup_completed = False
+                st.session_state.proceed_clicked = False
+                st.session_state.show_setup_logs = False
+                st.session_state.setup_cache_key += 1
                 st.rerun()
 
 
