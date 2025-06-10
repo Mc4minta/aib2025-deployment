@@ -6,7 +6,7 @@ import requests
 import joblib
 import os
 
-import time
+from pipeline import *
 
 def map_port(port):
     if port == 21:
@@ -49,7 +49,7 @@ def display_setup_logs():
         try:
             # install libpcap-dev library
             st.write(":arrow_down: Installing libpcap-dev...")
-            subprocess.run(["apt-get", "install", "-y", "libpcap-dev"], check=True)
+            subprocess.run(["sudo","apt-get", "install", "-y", "libpcap-dev"], check=True)
             st.write(":white_check_mark: libpcap-dev installed.")
             
             # CICflowmeter download if not exist
@@ -217,10 +217,7 @@ def main():
                 st.session_state.setup_failed = True
                 st.session_state.initial_setup_completed = False
             st.rerun()
-    
-    # delay until complete shown
-    time.sleep(1)
-    
+
     # show success and proceed after setup
     if st.session_state.initial_setup_completed and not st.session_state.proceed_clicked:
         st.success(":tada: Setup Completed")
