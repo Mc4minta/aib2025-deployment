@@ -1,6 +1,6 @@
 streamlit
-joblib
-requests
 pandas
-scapy==2.6.1
+numpy
+requests
+joblib
 google-generativeai
