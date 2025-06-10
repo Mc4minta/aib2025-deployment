@@ -10,9 +10,9 @@ import google.generativeai as genai
 import sys # Import sys for potential exit if truly needed (though st.stop() is preferred in Streamlit)
 
 # Assuming these are in your project directory (or adjust paths if they are elsewhere)
-from merge_flow import *
-from simulate_flow import *
-from utils import * # This is where map_port, preprocess_dataframe, and choose_label are now expected to be
+from src.merge_flow import *
+from src.simulate_flow import *
+from src.utils import * # This is where map_port, preprocess_dataframe, and choose_label are now expected to be
 
 # Global constant for Gemini model
 GEMINI_MODEL = "gemini-1.5-flash"
@@ -54,62 +54,53 @@ def configure_gemini(api_key):
         print(f"Error configuring Gemini (within cache_resource): {e}") # Log to console
         return None
 
-# --- CICFlowMeter and ML Model Setup Functions (UNCHANGED) ---
 def display_setup_logs():
     # CICFlowMeter setup
-    with st.status("Setting up CICFlowMeter-3.0...",expanded=True, state="running") as status:
+    with st.status("Setting up CICFlowMeter-3.0...", expanded=True, state="running") as status:
         try:
             # install libpcap-dev library
             st.write(":arrow_down: Installing libpcap-dev...")
-            # Note for Colab: You might need to change 'sudo apt-get' to '!apt-get'
-            # For local Linux, 'sudo' is typically required.
             subprocess.run(["sudo", "apt-get", "update"], check=True, capture_output=True, text=True)
-            subprocess.run(["sudo","apt-get", "install", "-y", "libpcap-dev"], check=True, capture_output=True, text=True)
+            subprocess.run(["sudo", "apt-get", "install", "-y", "libpcap-dev"], check=True, capture_output=True, text=True)
             st.write(":white_check_mark: libpcap-dev installed.")
-            
-            # CICflowmeter download if not exist
+
             if not os.path.exists("CICFlowMeter-3.0"):
-                # Download CICFlowMeter.zip from codeberg
                 st.write(":arrow_down: Downloading CICFlowMeter-3.0.zip...")
                 url = "https://codeberg.org/iortega/TCPDUMP_and_CICFlowMeter/archive/master:CICFlowMeters/CICFlowMeter-3.0.zip"
                 response = requests.get(url, stream=True)
-                response.raise_for_status() # Raise an HTTPError for bad responses (4xx or 5xx)
+                response.raise_for_status()
                 with open("CICFlowMeter-3.0.zip", "wb") as f:
                     for chunk in response.iter_content(chunk_size=8192):
                         f.write(chunk)
                 st.write(":white_check_mark: CICFlowMeter-3.0.zip downloaded.")
-                
-                # Extracting CICFlowMeter from codeberge
+
                 st.write(":open_file_folder: Extracting CICFlowMeter-3.0...")
-                subprocess.run(["unzip", "-o", "CICFlowMeter-3.0.zip", "-d", "CICFlowMeter-3.0"], check=True, capture_output=True, text=True) # Added -o for overwrite
+                subprocess.run(["unzip", "-o", "CICFlowMeter-3.0.zip", "-d", "CICFlowMeter-3.0"], check=True, capture_output=True, text=True)
                 st.write(":white_check_mark: CICFlowMeter extracted.")
-                
-                # Setting executable permission 
+
                 st.write(":wrench: Configuring executable permission...")
                 subprocess.run(["chmod", "+x", "CICFlowMeter-3.0/tcpdump_and_cicflowmeter/bin/CICFlowMeter"], check=True, capture_output=True, text=True)
                 st.write(":white_check_mark: Permission configured")
-                
-                # Clearing unused zip file
+
                 st.write(":wastebasket: Clearing .zip file...")
-                subprocess.run(["rm","CICFlowMeter-3.0.zip"], check=True, capture_output=True, text=True)
+                subprocess.run(["rm", "CICFlowMeter-3.0.zip"], check=True, capture_output=True, text=True)
                 st.write(":white_check_mark: CICFlowMeter-3.0.zip Cleared")
             else:
                 st.write(":information_source: CICFlowMeter-3.0 existed. Skipping...")
-            
-            # Creating data/in data/out directories
+
             st.write(":file_folder: Creating data/in data/out directories...")
             os.makedirs("data/in", exist_ok=True)
             os.makedirs("data/out", exist_ok=True)
             st.write(":white_check_mark: Directories created.")
-            
+
             status.update(label=":white_check_mark: CICFlowMeter Setup Complete!", state="complete", expanded=False)
-            
+
         except subprocess.CalledProcessError as e:
             st.error(f":x: Error during CICFlowMeter setup. Command '{e.cmd}' returned non-zero exit status {e.returncode}. Output: {e.stdout}\nError: {e.stderr}")
             status.update(label=":x: CICFlowMeter Setup Failed", state="error", expanded=True)
-            st.session_state.setup_failed = True # Set flag to true on error
+            st.session_state.setup_failed = True
             st.session_state.initial_setup_completed = False
-            return False # Indicate failure
+            return False
         except requests.exceptions.RequestException as e:
             st.error(f":x: Error downloading CICFlowMeter: {e}")
             status.update(label=":x: CICFlowMeter Setup Failed", state="error", expanded=True)
@@ -122,11 +113,10 @@ def display_setup_logs():
             st.session_state.setup_failed = True
             st.session_state.initial_setup_completed = False
             return False
-    
+
     # Classification Model setup
-    with st.status("Setting up ML Model...",expanded=True, state="running") as status:
+    with st.status("Setting up ML Model...", expanded=True, state="running") as status:
         try:
-            # downloading model from hugging face if not exist
             if not os.path.exists("RandomForest400IntPortCIC1718-2.pkl"):
                 st.write(":hugging_face: Downloading ML model...")
                 model_url = "https://huggingface.co/Mc4minta/RandomForest400IntPortCIC1718/resolve/main/RandomForest400IntPortCIC1718-2.pkl"
@@ -136,18 +126,8 @@ def display_setup_logs():
                     for chunk in response.iter_content(chunk_size=8192):
                         f.write(chunk)
                 st.write(":white_check_mark: ML Model downloaded.")
-            
-            '''
-            # import model as using joblib
-            st.write(":robot_face: Loading ML model...")
-            model = joblib.load('RandomForest400IntPortCIC1718-2.pkl')
-            # The model is loaded here and directly assigned to session state
-            st.session_state.model_state = model
-            st.write(":white_check_mark: ML Model loaded successfully.")
-            '''
 
             status.update(label=":white_check_mark: ML Model Setup Complete", state="complete", expanded=False)
-            return True # Indicate success
         except requests.exceptions.RequestException as e:
             st.error(f":x: Error downloading ML Model: {e}")
             status.update(label=":x: ML Model Setup Failed", state="error", expanded=True)
@@ -157,6 +137,57 @@ def display_setup_logs():
         except Exception as e:
             st.error(f"An unexpected error occurred during ML Model setup: {e}")
             status.update(label=":x: ML Model Setup Failed", state="error", expanded=True)
+            st.session_state.setup_failed = True
+            st.session_state.initial_setup_completed = False
+            return False
+
+    # Sample PCAP setup
+    with st.status("Downloading sample pcap...", expanded=True, state="running") as status:
+        try:
+            if not os.path.exists("sample_pcap.zip"):
+                st.write(":hugging_face: Downloading sample_pcap.zip...")
+                zip_url = "https://huggingface.co/Mc4minta/RandomForest400IntPortCIC1718/resolve/main/sample_pcap.zip"
+                response = requests.get(zip_url, stream=True)
+                response.raise_for_status()
+                with open("sample_pcap.zip", "wb") as f:
+                    for chunk in response.iter_content(chunk_size=8192):
+                        f.write(chunk)
+                st.write(":white_check_mark: sample_pcap.zip Downloaded.")
+
+            if not os.path.exists("sample_pcap") or not os.listdir("sample_pcap"):
+                os.makedirs("sample_pcap", exist_ok=True)
+
+                st.write(":open_file_folder: Extracting sample_pcap...")
+                subprocess.run(["unzip", "-o", "sample_pcap.zip", "-d", "."], check=True, capture_output=True, text=True)
+                st.write(":white_check_mark: sample_pcap extracted.")
+
+                if os.path.exists("sample_pcap") and os.listdir("sample_pcap"):
+                    pcap_files = [f for f in os.listdir("sample_pcap") if f.endswith('.pcap')]
+                    st.write(f":information_source: Found {len(pcap_files)} .pcap files in sample_pcap directory.")
+                else:
+                    st.warning(":warning: sample_pcap directory appears to be empty after extraction.")
+            else:
+                pcap_files = [f for f in os.listdir("sample_pcap") if f.endswith('.pcap')]
+                st.write(f":information_source: Sample PCAP directory already exists with {len(pcap_files)} .pcap files. Skipping extraction.")
+
+            status.update(label=":white_check_mark: Sample Data Setup Complete", state="complete", expanded=False)
+            return True
+
+        except subprocess.CalledProcessError as e:
+            st.error(f":x: Error extracting sample data: Command '{e.cmd}' returned {e.returncode}. Output: {e.stdout}\nError: {e.stderr}")
+            status.update(label=":x: Sample Data Extraction Failed", state="error", expanded=True)
+            st.session_state.setup_failed = True
+            st.session_state.initial_setup_completed = False
+            return False
+        except requests.exceptions.RequestException as e:
+            st.error(f":x: Error downloading sample data: {e}")
+            status.update(label=":x: Sample Data Setup Failed", state="error", expanded=True)
+            st.session_state.setup_failed = True
+            st.session_state.initial_setup_completed = False
+            return False
+        except Exception as e:
+            st.error(f":x: An unexpected error occurred during sample data setup: {e}")
+            status.update(label=":x: Sample Data Setup Failed", state="error", expanded=True)
             st.session_state.setup_failed = True
             st.session_state.initial_setup_completed = False
             return False
@@ -588,7 +619,7 @@ def main():
                     pcap_filename_for_analysis = uploaded_file.name
 
             elif selection_method == "Choose from Sample Data":
-                sample_data_dir = "sample_data"
+                sample_data_dir = "sample_pcap"
                 if os.path.exists(sample_data_dir):
                     pcap_files = [f for f in os.listdir(sample_data_dir) if f.endswith('.pcap')]
                     if pcap_files:
@@ -603,9 +634,9 @@ def main():
                             with open(sample_file_path, "rb") as f:
                                 pcap_to_analyze_bytes = f.read()
                     else:
-                        st.warning("No .pcap files found in the 'sample_data' folder.")
+                        st.warning("No .pcap files found in the 'sample_pcap' folder.")
                 else:
-                    st.error("The 'sample_data' folder does not exist. Please create it and add .pcap files.")
+                    st.error("The 'sample_pcap' folder does not exist. Please create it and add .pcap files.")
 
             # --- Analysis Button ---
             if pcap_to_analyze_bytes is not None and pcap_filename_for_analysis is not None:
